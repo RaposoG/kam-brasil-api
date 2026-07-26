@@ -30,6 +30,7 @@ import {
  */
 
 const busy = ref(false);
+const checking = ref(false);
 const error = ref("");
 const check = ref<UpdateCheck | null>(null);
 const original = ref<OriginalGame | null>(null);
@@ -60,12 +61,15 @@ const eta = computed(() => {
 
 async function refresh() {
   error.value = "";
+  checking.value = true;
   try {
     check.value = await checkUpdate();
     assetsOk.value = await assetsStatus();
     if (!original.value) original.value = await findOriginalGame();
   } catch (e) {
     error.value = String(e);
+  } finally {
+    checking.value = false;
   }
 }
 
@@ -189,7 +193,12 @@ onMounted(async () => {
 
         <section v-else class="step">
           <button class="primary" @click="onPlay">Jogar</button>
-          <p class="small muted center">Versão {{ check?.installedVersion }}</p>
+          <div class="row center small muted">
+            <span>Versão {{ check?.installedVersion }}</span>
+            <button class="link" :disabled="checking" @click="refresh">
+              {{ checking ? "verificando…" : "verificar atualização" }}
+            </button>
+          </div>
         </section>
       </template>
     </template>
@@ -266,6 +275,21 @@ button.primary:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  box-shadow: none;
+}
+button.link:disabled {
+  cursor: default;
+  text-decoration: none;
+}
+
 button.ghost {
   padding: 0.5rem;
   border: 1px solid rgba(128, 128, 128, 0.4);

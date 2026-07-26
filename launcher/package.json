@@ -1,9 +1,9 @@
 {
   "name": "@kambrasil/launcher",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
-  "description": "Launcher do Kam Brasil — login, atualização automática e lançamento do jogo",
+  "description": "Launcher do Kam Brasil â€” login, atualizaÃ§Ã£o automÃ¡tica e lanÃ§amento do jogo",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",

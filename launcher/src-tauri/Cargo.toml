@@ -1,6 +1,6 @@
 [package]
 name = "launcher"
-version = "0.1.0"
+version = "1.0.0"
 description = "Launcher do Kam Brasil"
 authors = ["Kam Brasil"]
 edition = "2021"
@@ -27,7 +27,10 @@ serde_json = "1"
 # sem depender de SChannel/OpenSSL do sistema.
 # webpki-roots embute a store de certificados: mesmo comportamento em qualquer
 # maquina, sem depender do que o SO tem instalado.
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "webpki-roots"] }
+# http2 importa aqui: a release tem 8447 arquivos e 79% deles nao chegam a
+# 10 KB. Com HTTP/1.1 cada um custa uma ida-e-volta; com h2 eles multiplexam
+# numa conexao so.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "webpki-roots", "http2"] }
 
 # Guarda o token no cofre do sistema (Gerenciador de Credenciais no Windows).
 # Os backends de Windows, macOS e Linux ja vem habilitados por padrao.
@@ -40,9 +43,10 @@ sha2 = "0.10"
 # exemplo). Hardcodar %USERPROFILE%\Documents erraria nessas maquinas.
 dirs = "6"
 
-# fs/io assincronos para o download. O Tauri ja usa tokio; declaramos as
-# features que precisamos em vez de depender das dele por acaso.
-tokio = { version = "1", features = ["fs", "io-util"] }
+# fs/io assincronos para o download, e sync/time/rt para baixar em paralelo.
+# O Tauri ja usa tokio; declaramos as features que precisamos em vez de depender
+# das dele por acaso.
+tokio = { version = "1", features = ["fs", "io-util", "sync", "time", "rt"] }
 tauri-plugin-dialog = "2.7.2"
 
 [dev-dependencies]

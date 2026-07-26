@@ -11,11 +11,15 @@
 //! jogador (ver `assets.rs`).
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::AsyncWriteExt;
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 
 use crate::auth::AppState;
 
@@ -170,6 +174,80 @@ pub async fn check_update(state: State<'_, AppState>) -> Result<serde_json::Valu
     }))
 }
 
+/// Quantos arquivos baixar ao mesmo tempo.
+///
+/// A release tem 8447 arquivos e **79% deles não chegam a 10 KB**. Baixados um
+/// de cada vez, com ~250 ms de ida-e-volta por requisição, seriam ~35 minutos
+/// gastos em latência — a banda fica ociosa o tempo todo, esperando resposta.
+///
+/// 12 é um meio-termo: derruba o tempo em uma ordem de grandeza sem transformar
+/// a instalação de um jogador num teste de carga contra a nossa API.
+const CONCURRENCY: usize = 12;
+
+/// Baixa um arquivo, confere o sha256 e o instala.
+///
+/// Grava em `.kbpart` e só então renomeia: uma queda no meio não deixa um
+/// arquivo truncado passando por bom na verificação seguinte.
+async fn download_one(
+    client: &reqwest::Client,
+    base_url: &str,
+    dir: &Path,
+    file: &ManifestFile,
+    bytes_done: &AtomicU64,
+) -> Result<(), String> {
+    let dest = dir.join(file.path.replace('/', std::path::MAIN_SEPARATOR_STR));
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("não foi possível criar {}: {e}", parent.display()))?;
+    }
+
+    let url = format!("{}/{}", base_url.trim_end_matches('/'), file.path);
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("falha ao baixar {}: {e}", file.path))?;
+
+    if !response.status().is_success() {
+        return Err(format!("servidor respondeu {} ao baixar {}", response.status(), file.path));
+    }
+
+    let temp = dest.with_extension("kbpart");
+    let mut out = tokio::fs::File::create(&temp)
+        .await
+        .map_err(|e| format!("não foi possível gravar {}: {e}", file.path))?;
+
+    let mut hasher = Sha256::new();
+    let mut stream = response;
+
+    while let Some(chunk) = stream
+        .chunk()
+        .await
+        .map_err(|e| format!("download de {} interrompido: {e}", file.path))?
+    {
+        hasher.update(&chunk);
+        bytes_done.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+        out.write_all(&chunk)
+            .await
+            .map_err(|e| format!("erro ao gravar {}: {e}", file.path))?;
+    }
+
+    out.flush().await.map_err(|e| format!("erro ao finalizar {}: {e}", file.path))?;
+    drop(out);
+
+    if format!("{:x}", hasher.finalize()) != file.sha256.to_lowercase() {
+        let _ = tokio::fs::remove_file(&temp).await;
+        return Err(format!("{} não confere com o manifesto", file.path));
+    }
+
+    tokio::fs::rename(&temp, &dest)
+        .await
+        .map_err(|e| format!("não foi possível instalar {}: {e}", file.path))?;
+
+    Ok(())
+}
+
 /// Baixa tudo que falta e grava a versão instalada.
 #[tauri::command]
 pub async fn install_update(app: AppHandle, release: LatestRelease) -> Result<(), String> {
@@ -205,74 +283,84 @@ pub async fn install_update(app: AppHandle, release: LatestRelease) -> Result<()
 
     let bytes_total: u64 = pending.iter().map(|f| f.size).sum();
     let files_total = pending.len() as u32;
+
     let client = reqwest::Client::new();
     let started = std::time::Instant::now();
-    let mut bytes_done: u64 = 0;
+    let bytes_done = Arc::new(AtomicU64::new(0));
+    let files_done = Arc::new(AtomicU32::new(0));
 
-    for (index, file) in pending.iter().enumerate() {
-        let dest = dir.join(file.path.replace('/', std::path::MAIN_SEPARATOR_STR));
-        if let Some(parent) = dest.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| format!("não foi possível criar {}: {e}", parent.display()))?;
-        }
+    // Progresso sai de um relógio próprio, não de dentro dos downloads. Com 12
+    // tarefas concorrentes, emitir por chunk inundaria a webview com milhares
+    // de eventos por segundo para atualizar uma barra.
+    let ticker = {
+        let app = app.clone();
+        let bytes_done = bytes_done.clone();
+        let files_done = files_done.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
+            loop {
+                interval.tick().await;
+                let done = bytes_done.load(Ordering::Relaxed);
+                let secs = started.elapsed().as_secs_f64().max(0.001);
+                let _ = app.emit(
+                    "install-progress",
+                    Progress {
+                        phase: "baixando".into(),
+                        current_file: String::new(),
+                        files_done: files_done.load(Ordering::Relaxed),
+                        files_total,
+                        bytes_done: done,
+                        bytes_total,
+                        bytes_per_second: (done as f64 / secs) as u64,
+                    },
+                );
+            }
+        })
+    };
 
-        let url = format!("{}/{}", release.base_url.trim_end_matches('/'), file.path);
-        let response = client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| format!("falha ao baixar {}: {e}", file.path))?;
+    let semaphore = Arc::new(Semaphore::new(CONCURRENCY));
+    let mut tasks = JoinSet::new();
 
-        if !response.status().is_success() {
-            return Err(format!("servidor respondeu {} ao baixar {}", response.status(), file.path));
-        }
+    for file in pending {
+        let permit = semaphore.clone();
+        let client = client.clone();
+        let base_url = release.base_url.clone();
+        let dir = dir.clone();
+        let bytes_done = bytes_done.clone();
+        let files_done = files_done.clone();
 
-        // Grava em .part e só então renomeia: uma queda no meio não deixa um
-        // arquivo truncado passando por bom na próxima verificação.
-        let temp = dest.with_extension("kbpart");
-        let mut out = tokio::fs::File::create(&temp)
-            .await
-            .map_err(|e| format!("não foi possível gravar {}: {e}", file.path))?;
-
-        let mut hasher = Sha256::new();
-        let mut stream = response;
-
-        while let Some(chunk) = stream
-            .chunk()
-            .await
-            .map_err(|e| format!("download de {} interrompido: {e}", file.path))?
-        {
-            hasher.update(&chunk);
-            bytes_done += chunk.len() as u64;
-            out.write_all(&chunk)
-                .await
-                .map_err(|e| format!("erro ao gravar {}: {e}", file.path))?;
-
-            let secs = started.elapsed().as_secs_f64().max(0.001);
-            emit(Progress {
-                phase: "baixando".into(),
-                current_file: file.path.clone(),
-                files_done: index as u32,
-                files_total,
-                bytes_done,
-                bytes_total,
-                bytes_per_second: (bytes_done as f64 / secs) as u64,
-            });
-        }
-
-        out.flush().await.map_err(|e| format!("erro ao finalizar {}: {e}", file.path))?;
-        drop(out);
-
-        if format!("{:x}", hasher.finalize()) != file.sha256.to_lowercase() {
-            let _ = tokio::fs::remove_file(&temp).await;
-            return Err(format!("{} não confere com o manifesto", file.path));
-        }
-
-        tokio::fs::rename(&temp, &dest)
-            .await
-            .map_err(|e| format!("não foi possível instalar {}: {e}", file.path))?;
+        tasks.spawn(async move {
+            let _permit = permit.acquire().await.map_err(|e| e.to_string())?;
+            download_one(&client, &base_url, &dir, &file, &bytes_done).await?;
+            files_done.fetch_add(1, Ordering::Relaxed);
+            Ok::<(), String>(())
+        });
     }
+
+    // Primeiro erro aborta o resto: insistir depois de uma falha so faria o
+    // jogador esperar mais para receber a mesma mensagem.
+    let mut failure: Option<String> = None;
+    while let Some(joined) = tasks.join_next().await {
+        match joined {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                failure = Some(e);
+                tasks.abort_all();
+            }
+            Err(e) => {
+                failure = Some(format!("tarefa de download falhou: {e}"));
+                tasks.abort_all();
+            }
+        }
+    }
+
+    ticker.abort();
+
+    if let Some(error) = failure {
+        return Err(error);
+    }
+
+    let bytes_done = bytes_done.load(Ordering::Relaxed);
 
     let info = InstalledInfo { version: manifest.version.clone() };
     tokio::fs::write(
