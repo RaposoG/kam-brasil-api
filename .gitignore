@@ -1,0 +1,15 @@
+# Dependencias e build
+node_modules/
+dist/
+**/target/
+launcher/src-tauri/gen/
+
+# Segredos e configuracao local
+.env
+!.env.example
+
+# Binarios das releases: centenas de MB, servidos de volume em producao
+api/releases/
+
+# Logs
+*.log
