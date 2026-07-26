@@ -43,7 +43,7 @@ export interface OriginalGame {
 }
 
 export interface InstallProgress {
-  phase: 'verificando' | 'baixando' | 'assets' | 'pronto'
+  phase: 'verificando' | 'baixando' | 'extraindo' | 'assets' | 'pronto'
   current_file: string
   files_done: number
   files_total: number

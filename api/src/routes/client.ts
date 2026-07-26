@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { config } from '../config.ts'
 import { clientReleases } from '../data-source.ts'
 import type { ClientRelease } from '../entities/client-release.ts'
-import { buildReleaseTree } from '../release-builder.ts'
+import { buildReleaseTree, run } from '../release-builder.ts'
 
 const publishSchema = z.object({
   version: z.string().regex(/^[0-9]+\.[0-9]+\.[0-9]+$/, 'versão deve ser no formato 1.2.3'),
@@ -194,7 +194,27 @@ export default async function clientRoutes(app: FastifyInstance) {
       totalBytes += size
     }
 
-    const manifest = { version, gameRevision, files }
+    // Um zip da árvore inteira, para quem instala do zero.
+    //
+    // Não é otimização de banda, é de latência: são 8470 arquivos e 79% deles
+    // não chegam a 10 KB. O Cloudflare cacheia por lista de extensões, e `.libx`,
+    // `.dat`, `.script` e `.map` não estão nela — cada um ia até o VPS toda vez,
+    // a 0,4-1,5 s de ida e volta. Medido: 7 arquivos/s, ~20 minutos de download.
+    //
+    // `.zip` está na lista. Uma requisição, servida da borda.
+    //
+    // -1 (compressão rápida) porque metade do peso são PNGs já comprimidos:
+    // apertar mais só gastaria CPU sem encolher nada.
+    const zipName = 'full.zip'
+    const zipPath = join(releaseDir, zipName)
+    await run(['zip', '-r', '-q', '-1', zipPath, '.'], filesDir)
+    const zip = {
+      name: zipName,
+      size: (await stat(zipPath)).size,
+      sha256: await sha256OfFile(zipPath),
+    }
+
+    const manifest = { version, gameRevision, zip, files }
     const manifestJson = JSON.stringify(manifest, null, 2)
     await writeFile(join(releaseDir, 'manifest.json'), manifestJson)
     const manifestSha256 = createHash('sha256').update(manifestJson).digest('hex')

@@ -167,6 +167,12 @@ onMounted(async () => {
         </p>
       </section>
 
+      <section v-else-if="busy && download?.phase === 'extraindo'" class="step">
+        <strong>Instalando os arquivos…</strong>
+        <div class="bar"><div class="fill" :style="{ width: checkPercent + '%' }" /></div>
+        <p class="small muted">{{ download.files_done }} / {{ download.files_total }}</p>
+      </section>
+
       <section v-else-if="busy && download" class="step">
         <div class="bar"><div class="fill" :style="{ width: percent + '%' }" /></div>
         <div class="row small">

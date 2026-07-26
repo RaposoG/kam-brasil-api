@@ -44,6 +44,10 @@ await app.register(fastifyStatic, { root: releasesDir, prefix: '/downloads/' })
 app.addHook('onSend', async (request, reply) => {
   if (request.url.startsWith('/downloads/')) {
     reply.header('content-type', 'application/octet-stream')
+    // Conteúdo de release é imutável: cada versão mora na própria pasta e
+    // republicar a mesma versão é recusado com 409. O @fastify/static manda
+    // `max-age=0`, que faz cada jogador rebaixar tudo e o CDN nunca segurar nada.
+    reply.header('cache-control', 'public, max-age=31536000, immutable')
   }
 })
 

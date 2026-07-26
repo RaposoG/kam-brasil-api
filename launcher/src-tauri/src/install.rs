@@ -32,11 +32,22 @@ pub struct ManifestFile {
     pub sha256: String,
 }
 
+/// A árvore inteira num arquivo só, para instalação do zero.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ManifestZip {
+    pub name: String,
+    pub size: u64,
+    pub sha256: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Manifest {
     pub version: String,
     #[serde(rename = "gameRevision")]
     pub game_revision: String,
+    /// Ausente em releases publicadas antes do zip existir.
+    #[serde(default)]
+    pub zip: Option<ManifestZip>,
     pub files: Vec<ManifestFile>,
 }
 
@@ -203,6 +214,169 @@ pub async fn check_update(state: State<'_, AppState>) -> Result<serde_json::Valu
 /// ajuda até o ponto em que a VPS começa a reclamar — não além.
 const CONCURRENCY: usize = 16;
 
+/// A partir de quantos arquivos faltando vale baixar o zip em vez de um a um.
+///
+/// O custo aqui é por requisição, não por byte: as extensões do KaM não estão na
+/// lista de cacheáveis do Cloudflare, então cada arquivo vai até o VPS a ~1s de
+/// ida e volta. Medido: 7 arquivos/s. Instalar do zero levava ~20 minutos.
+///
+/// Acima deste número, um zip de ~400 MB numa requisição só ganha de longe.
+/// Abaixo, não: atualizar da 1.0.1 para a 1.0.2 são 2 arquivos e 23 MB — baixar
+/// o zip inteiro para trocar dois executáveis seria trocar 20 minutos por 30
+/// segundos desnecessários.
+const ZIP_THRESHOLD: usize = 500;
+
+/// Baixa o zip da release, confere o sha256 e extrai por cima da pasta do jogo.
+///
+/// Grava em `.kbzip` e só extrai depois de conferir o hash: um zip truncado
+/// extrairia meia release e o jogo abriria quebrado.
+async fn install_from_zip(
+    app: &AppHandle,
+    client: &reqwest::Client,
+    manifest_url: &str,
+    dir: &Path,
+    zip: &ManifestZip,
+) -> Result<(), String> {
+    let url = manifest_url
+        .rsplit_once('/')
+        .map(|(base, _)| format!("{base}/{}", zip.name))
+        .ok_or("URL do manifesto inesperada")?;
+
+    let temp = dir.join(".kambrasil-download.kbzip");
+    let mut response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("não foi possível baixar o pacote: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("servidor respondeu {} ao baixar o pacote", response.status()));
+    }
+
+    let mut out = tokio::fs::File::create(&temp)
+        .await
+        .map_err(|e| format!("não foi possível gravar o pacote: {e}"))?;
+
+    let mut hasher = Sha256::new();
+    let mut done: u64 = 0;
+    let started = std::time::Instant::now();
+    let mut last_emit = std::time::Instant::now();
+
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("download do pacote interrompido: {e}"))?
+    {
+        hasher.update(&chunk);
+        done += chunk.len() as u64;
+        out.write_all(&chunk)
+            .await
+            .map_err(|e| format!("erro ao gravar o pacote: {e}"))?;
+
+        if last_emit.elapsed() >= std::time::Duration::from_millis(200) {
+            last_emit = std::time::Instant::now();
+            let secs = started.elapsed().as_secs_f64().max(0.001);
+            let _ = app.emit(
+                "install-progress",
+                Progress {
+                    phase: "baixando".into(),
+                    current_file: String::new(),
+                    files_done: 0,
+                    files_total: 0,
+                    bytes_done: done,
+                    bytes_total: zip.size,
+                    bytes_per_second: (done as f64 / secs) as u64,
+                },
+            );
+        }
+    }
+
+    out.flush().await.map_err(|e| format!("erro ao finalizar o pacote: {e}"))?;
+    drop(out);
+
+    if format!("{:x}", hasher.finalize()) != zip.sha256.to_lowercase() {
+        let _ = tokio::fs::remove_file(&temp).await;
+        return Err("o pacote baixado não confere com o manifesto".into());
+    }
+
+    // Extrair é CPU e disco: fora da thread do runtime, senão a janela congela.
+    let dir_owned = dir.to_path_buf();
+    let temp_owned = temp.clone();
+    let app_owned = app.clone();
+    tokio::task::spawn_blocking(move || extract_zip(&app_owned, &temp_owned, &dir_owned))
+        .await
+        .map_err(|e| format!("falha ao extrair o pacote: {e}"))??;
+
+    let _ = tokio::fs::remove_file(&temp).await;
+    Ok(())
+}
+
+fn extract_zip(app: &AppHandle, zip_path: &Path, dir: &Path) -> Result<(), String> {
+    extract_zip_to(zip_path, dir, |done, total| {
+        let _ = app.emit(
+            "install-progress",
+            Progress {
+                phase: "extraindo".into(),
+                current_file: String::new(),
+                files_done: done,
+                files_total: total,
+                bytes_done: 0,
+                bytes_total: 0,
+                bytes_per_second: 0,
+            },
+        );
+    })
+}
+
+/// Extrai o zip por cima de `dir`.
+///
+/// Separado do `AppHandle` para poder ser testado: montar um Tauri num teste
+/// unitário não vale o trabalho, e o que precisa de teste é o tratamento de
+/// caminho, não a emissão de evento.
+fn extract_zip_to(
+    zip_path: &Path,
+    dir: &Path,
+    mut on_progress: impl FnMut(u32, u32),
+) -> Result<(), String> {
+    let file = std::fs::File::open(zip_path).map_err(|e| format!("não foi possível abrir o pacote: {e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("pacote ilegível: {e}"))?;
+
+    let total = archive.len() as u32;
+
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("entrada {i} ilegível no pacote: {e}"))?;
+
+        // enclosed_name descarta caminhos com ".." ou raiz absoluta -- e o que
+        // impede um zip malicioso de escrever fora da pasta do jogo.
+        let Some(rel) = entry.enclosed_name() else {
+            return Err(format!("pacote com caminho suspeito: {}", entry.name()));
+        };
+        let dest = dir.join(rel);
+
+        if entry.is_dir() {
+            std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+
+        let mut out = std::fs::File::create(&dest)
+            .map_err(|e| format!("não foi possível gravar {}: {e}", dest.display()))?;
+        std::io::copy(&mut entry, &mut out)
+            .map_err(|e| format!("erro ao extrair {}: {e}", dest.display()))?;
+
+        if i % 200 == 0 {
+            on_progress(i as u32, total);
+        }
+    }
+
+    Ok(())
+}
+
 /// Baixa um arquivo, confere o sha256 e o instala.
 ///
 /// Grava em `.kbpart` e só então renomeia: uma queda no meio não deixa um
@@ -302,7 +476,7 @@ pub async fn install_update(app: AppHandle, release: LatestRelease) -> Result<()
     let manifest = fetch_manifest(&release.manifest_url).await?;
 
     // Comparar é I/O pesado; sai da thread do runtime para não travar a janela.
-    let pending = {
+    let mut pending = {
         let dir = dir.clone();
         let manifest = manifest.clone();
         let app = app.clone();
@@ -327,10 +501,26 @@ pub async fn install_update(app: AppHandle, release: LatestRelease) -> Result<()
         .map_err(|e| format!("falha ao comparar arquivos: {e}"))?
     };
 
+    let client = reqwest::Client::new();
+
+    // Muita coisa faltando = instalação do zero. Uma requisição em vez de
+    // milhares, e depois a conferência normal valida o que chegou.
+    if pending.len() >= ZIP_THRESHOLD {
+        if let Some(zip) = manifest.zip.clone() {
+            install_from_zip(&app, &client, &release.manifest_url, &dir, &zip).await?;
+
+            // Confere o que foi extraído. Se algo faltar, o caminho normal
+            // abaixo cobre a diferença -- que a essa altura são poucos arquivos.
+            let dir2 = dir.clone();
+            let manifest2 = manifest.clone();
+            pending = tokio::task::spawn_blocking(move || files_to_download(&dir2, &manifest2, |_| {}))
+                .await
+                .map_err(|e| format!("falha ao conferir o pacote extraído: {e}"))?;
+        }
+    }
+
     let bytes_total: u64 = pending.iter().map(|f| f.size).sum();
     let files_total = pending.len() as u32;
-
-    let client = reqwest::Client::new();
     let started = std::time::Instant::now();
     let bytes_done = Arc::new(AtomicU64::new(0));
     let files_done = Arc::new(AtomicU32::new(0));
@@ -450,6 +640,7 @@ mod tests {
         Manifest {
             version: "1.0.0".into(),
             game_revision: "r16155".into(),
+            zip: None,
             files: files
                 .iter()
                 .map(|(path, content)| ManifestFile {
@@ -476,6 +667,58 @@ mod tests {
         assert_ne!(temp_of("AED01.dat"), temp_of("AED01.map"));
         assert_ne!(temp_of("AED01.dat"), temp_of("AED01.script"));
         assert!(temp_of("AED01.dat").to_string_lossy().ends_with("AED01.dat.kbpart"));
+    }
+
+    fn zip_com(entradas: &[(&str, &str)], destino: &Path) {
+        use std::io::Write;
+        let f = std::fs::File::create(destino).unwrap();
+        let mut w = zip::ZipWriter::new(f);
+        for (nome, conteudo) in entradas {
+            w.start_file::<_, ()>(*nome, zip::write::SimpleFileOptions::default()).unwrap();
+            w.write_all(conteudo.as_bytes()).unwrap();
+        }
+        w.finish().unwrap();
+    }
+
+    /// O zip da API sai de `zip -r -q -1 out.zip .`, entao as entradas podem vir
+    /// com "./" na frente. Se isso virasse uma pasta chamada ".", o jogo seria
+    /// instalado no lugar errado e a conferencia seguinte rebaixaria tudo -- o
+    /// problema que o zip existe para resolver.
+    #[test]
+    fn extrai_normalizando_o_prefixo_de_diretorio_atual() {
+        let dir = temp_dir("zip-prefixo");
+        let z = dir.join("pacote.zip");
+        zip_com(
+            &[("./KaM_Remake.exe", "exe"), ("./data/text/a.libx", "texto"), ("bass.dll", "dll")],
+            &z,
+        );
+
+        let saida = dir.join("jogo");
+        extract_zip_to(&z, &saida, |_, _| {}).unwrap();
+
+        assert!(saida.join("KaM_Remake.exe").is_file(), "deveria estar na raiz");
+        assert!(saida.join("data").join("text").join("a.libx").is_file());
+        assert!(saida.join("bass.dll").is_file());
+        assert!(!saida.join(".").join("KaM_Remake.exe").exists() || saida.join("KaM_Remake.exe").is_file());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Um zip com "../" no caminho escreveria fora da pasta do jogo. Quem
+    /// impede e o enclosed_name(); trocar por entry.name() quebraria isto.
+    #[test]
+    fn zip_com_caminho_de_escape_e_recusado() {
+        let dir = temp_dir("zip-escape");
+        let z = dir.join("malicioso.zip");
+        zip_com(&[("../../fora.txt", "nao deveria sair")], &z);
+
+        let saida = dir.join("jogo");
+        let r = extract_zip_to(&z, &saida, |_, _| {});
+
+        assert!(r.is_err(), "caminho com .. deveria ser recusado");
+        assert!(!dir.parent().unwrap().join("fora.txt").exists(), "escapou da pasta");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

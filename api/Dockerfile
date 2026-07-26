@@ -14,7 +14,7 @@ ENV NODE_ENV=production
 # git: a API monta as releases clonando os repositorios de conteudo (mapas,
 # textos, sprites da comunidade) em vez de receber meio giga por upload.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates \
+ && apt-get install -y --no-install-recommends git ca-certificates zip \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=deps /app/node_modules ./node_modules

@@ -39,6 +39,11 @@ keyring = "4"
 # Verificacao de integridade do cliente baixado.
 sha2 = "0.10"
 
+# Instalacao do zero vem num zip so. Sem ele seriam 8447 requisicoes, e as
+# extensoes do KaM (.libx, .dat, .script, .map) nao estao na lista de
+# cacheaveis do Cloudflare -- cada uma ia ate o VPS, a ~1s de ida e volta.
+zip = "8.6.0"
+
 # Localiza a pasta Documentos respeitando redirecionamento (OneDrive, por
 # exemplo). Hardcodar %USERPROFILE%\Documents erraria nessas maquinas.
 dirs = "6"

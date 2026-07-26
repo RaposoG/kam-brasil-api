@@ -93,7 +93,7 @@ async function exists(path: string) {
   }
 }
 
-async function run(cmd: string[], cwd?: string): Promise<void> {
+export async function run(cmd: string[], cwd?: string): Promise<void> {
   const proc = Bun.spawn(cmd, { cwd, stdout: 'pipe', stderr: 'pipe' })
   const code = await proc.exited
   if (code !== 0) {
