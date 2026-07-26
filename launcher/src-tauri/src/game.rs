@@ -65,6 +65,26 @@ fn replace_xml_attr(content: &str, element: &str, attr: &str, value: &str) -> Op
     Some(updated)
 }
 
+/// Endereço do master server, sempre em **HTTP puro** — de propósito.
+///
+/// `KM_HTTPClientOverbyte` usa o `THTTPCli` do ICS sem `SslContext` nenhum: não
+/// existe uma linha de SSL em todo o cliente HTTP do jogo. Uma URL `https` faz
+/// ele abortar com "SSL requires a context object" e a lista de servidores nunca
+/// carrega. O default do próprio KaM é `http://master.kamremake.com/` — o
+/// ecossistema inteiro fala plaintext aqui.
+///
+/// O que trafega assim é só a **lista pública de servidores**. Conta, senha e
+/// ticket de jogo passam pelo launcher, que fala HTTPS de verdade — e o
+/// `/auth/verify` só aceita 127.0.0.1, então nunca cruza a internet.
+fn master_url(api_base: &str) -> String {
+    let base = api_base.trim_end_matches('/');
+    let host = base
+        .strip_prefix("https://")
+        .or_else(|| base.strip_prefix("http://"))
+        .unwrap_or(base);
+    format!("http://{host}/")
+}
+
 /// Aponta o jogo para a nossa infraestrutura antes de lançá-lo.
 ///
 /// - **Nickname** em `KaM Remake Settings.xml`. É conveniência: quem manda de
@@ -95,7 +115,7 @@ fn configure_game(nickname: &str, api_base: &str) -> Result<(), String> {
     }
 
     let ini_path = dir.join("KaM Remake Server Settings.ini");
-    let master = format!("{}/", api_base.trim_end_matches('/'));
+    let master = master_url(api_base);
     let ini = match std::fs::read_to_string(&ini_path) {
         Ok(content) if content.contains("MasterServerAddressNew=") => content
             .lines()
@@ -172,6 +192,15 @@ pub async fn launch_game(state: State<'_, AppState>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Uma URL https aqui trava o multiplayer inteiro: o cliente do jogo aborta
+    /// com "SSL requires a context object" e nao lista servidor nenhum.
+    #[test]
+    fn master_server_nunca_sai_em_https() {
+        assert_eq!(master_url("https://kam-api.melhorzin.com"), "http://kam-api.melhorzin.com/");
+        assert_eq!(master_url("https://kam-api.melhorzin.com/"), "http://kam-api.melhorzin.com/");
+        assert_eq!(master_url("http://localhost:3000"), "http://localhost:3000/");
+    }
 
     #[test]
     fn troca_nickname_preservando_o_resto_do_xml() {
