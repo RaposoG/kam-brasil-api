@@ -1,0 +1,9 @@
+# Scripts que rodam dentro de container precisam de LF, sempre.
+#
+# Num checkout no Windows o Git converteria para CRLF, e o `#!/bin/sh\r` faz o
+# kernel do Linux procurar um interpretador chamado "sh\r". O erro que aparece é
+# "no such file or directory" apontando para um arquivo que está visivelmente
+# ali — uma das mensagens mais enganosas que existem.
+*.sh text eol=lf
+Dockerfile text eol=lf
+entrypoint.sh text eol=lf
