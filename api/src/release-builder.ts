@@ -43,6 +43,12 @@ const FROM_GAME_DIRS: [string, string][] = [
   ['data/text', 'data/text'],
   ['data/gfx/fonts', 'data/gfx/fonts'],
   ['data/cursors', 'data/cursors'],
+  // O engine carrega `lib\vlc\libvlccore.dll` por caminho fixo (KM_VLC.pas:10)
+  // e aborta a abertura sem ele. É a biblioteca dos vídeos de campanha.
+  ['lib/vlc', 'lib/vlc'],
+  // Efeitos de interface que não vêm do jogo original: clique, chat, farol,
+  // vitória, derrota (KM_ResSound.pas, NEW_SFX_FOLDER).
+  ['Sounds', 'Sounds'],
   ['Docs/Readme', 'Readme'],
 ]
 
@@ -52,6 +58,9 @@ const FROM_GAME_FILES = [
   'vorbis.dll',
   'vorbisfile.dll',
   'libzplay.dll',
+  // Lido em KM_Resource.pas:212. Sem ele o jogo morre com EAssertionFailed
+  // antes de desenhar qualquer coisa.
+  'data/locales.txt',
   'LICENSE.txt',
   'Changelog.txt',
 ]
@@ -186,9 +195,30 @@ export async function buildReleaseTree(binariesTag: string, log: Progress): Prom
     await copyDir(join(resources, 'SpriteResource', folder), join(out, 'SpriteResource', folder), log)
   }
 
-  // Uma montagem errada falha em silencio: a release sairia sem o jogo dentro.
-  // Conferir o essencial transforma isso em erro.
-  const required = ['KaM_Remake.exe', 'Utils/RXXPacker/RXXPacker.exe', 'data/text', 'Maps', 'SpriteResource/7']
+  // Uma montagem errada falha em silencio: a release sairia sem o jogo dentro,
+  // e o jogador so descobriria ao abrir. Conferir transforma isso em erro aqui.
+  //
+  // A lista abaixo e o que o engine le por caminho fixo e sem o que ele nao
+  // abre. Cada entrada esta aqui porque faltou de verdade em alguma montagem,
+  // ou porque falta dela seria fatal do mesmo jeito. Ao incluir dados novos,
+  // acrescente aqui tambem -- e o unico ponto que impede uma release quebrada
+  // de chegar aos jogadores.
+  const required = [
+    'KaM_Remake.exe',
+    'Utils/RXXPacker/RXXPacker.exe',
+    'bass.dll',
+    'data/text',
+    'data/locales.txt', // KM_Resource.pas:212 — EAssertionFailed sem ele
+    'data/defines/mapelem.dat',
+    'data/cursors',
+    'data/gfx/fonts',
+    'lib/vlc/libvlccore.dll', // KM_VLC.pas:10 — VLC_PATH fixo
+    'Sounds/UI/ButtonClick.wav', // KM_ResSound.pas — NEW_SFX_FOLDER
+    'Maps',
+    'MapsMP',
+    'Campaigns',
+    'SpriteResource/7',
+  ]
   const missing: string[] = []
   for (const path of required) if (!(await exists(join(out, path)))) missing.push(path)
   if (missing.length > 0) {
