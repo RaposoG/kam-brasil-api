@@ -33,15 +33,16 @@ WORKDIR /src/Utils/DedicatedServer
 # "unit não encontrada" por vez. `unused` fica de fora de propósito — tem um
 # `KM_PerfLog.pas` que sombrearia o de `src/perflog/`.
 #
-# -dNO_RNG_SPY é obrigatório: sem ele KM_CommonUtils puxa KM_RandomChecks, que
-# usa KM_GameSettings, que tem inline vars que o FPC não compila.
+# Sem nenhum `-d`: o RNG spy virou opt-in no KaM_Remake.inc, e era ele que
+# impedia o FPC — puxava KM_RandomChecks → KM_GameSettings, cheio de inline vars
+# do Delphi 10.3+. Se voltar a ser preciso desligar algo, o flag vem neste RUN.
 RUN NOGUI=$(dirname "$(find /usr/lib/lazarus -name interfaces.ppu -path '*/nogui/*' | head -1)") \
  && LCL=$(dirname "$NOGUI") \
  && LAZUTILS=$(dirname "$(find /usr/lib/lazarus -name lazutf8.ppu | head -1)") \
  && echo "LCL em $LCL, lazutils em $LAZUTILS" \
  && SRC="-Fi../.. -Fu../.." \
  && for d in $(find ../../src -type d -not -path '*/unused*'); do SRC="$SRC -Fi$d -Fu$d"; done \
- && fpc -Px86_64 -Mdelphi -O3 -dNO_RNG_SPY \
+ && fpc -Px86_64 -Mdelphi -O3 \
       -Fu$NOGUI -Fu$LCL -Fu$LAZUTILS \
       $SRC \
       -oKaM_DedicatedServer \
