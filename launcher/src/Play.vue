@@ -46,6 +46,13 @@ const percent = computed(() => {
   return Math.min(100, Math.round((p.bytes_done / p.bytes_total) * 100));
 });
 
+// A conferência não move bytes, então tem barra própria — contada em arquivos.
+const checkPercent = computed(() => {
+  const p = download.value;
+  if (!p || p.files_total === 0) return 0;
+  return Math.min(100, Math.round((p.files_done / p.files_total) * 100));
+});
+
 const speed = computed(() => {
   const bps = download.value?.bytes_per_second ?? 0;
   return bps > 1024 * 1024 ? `${(bps / 1024 / 1024).toFixed(1)} MB/s` : `${Math.round(bps / 1024)} KB/s`;
@@ -150,7 +157,17 @@ onMounted(async () => {
 
     <!-- 2. download -->
     <template v-if="original">
-      <section v-if="busy && download" class="step">
+      <!-- Numa reinstalação isso lê e hasheia centenas de MB e leva dezenas de
+           segundos. Sem dizer o que está acontecendo, a tela parece travada. -->
+      <section v-if="busy && download?.phase === 'verificando'" class="step">
+        <strong>Verificando arquivos já instalados…</strong>
+        <div class="bar"><div class="fill" :style="{ width: checkPercent + '%' }" /></div>
+        <p class="small muted">
+          {{ download.files_done }} / {{ download.files_total }} arquivos conferidos
+        </p>
+      </section>
+
+      <section v-else-if="busy && download" class="step">
         <div class="bar"><div class="fill" :style="{ width: percent + '%' }" /></div>
         <div class="row small">
           <span>{{ percent }}% · {{ mb(download.bytes_done) }} / {{ mb(download.bytes_total) }} MB</span>

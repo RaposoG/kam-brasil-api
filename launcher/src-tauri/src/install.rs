@@ -104,19 +104,36 @@ fn sha256_of(path: &Path) -> Option<String> {
 /// Tamanho diferente já reprova sem ler o arquivo inteiro — é o caso comum e
 /// evita hashear centenas de MB à toa. Só quando o tamanho bate é que o sha256
 /// decide, porque tamanho igual com conteúdo diferente existe.
-pub fn files_to_download(dir: &Path, manifest: &Manifest) -> Vec<ManifestFile> {
-    manifest
-        .files
-        .iter()
-        .filter(|f| {
-            let local = dir.join(f.path.replace('/', std::path::MAIN_SEPARATOR_STR));
-            match std::fs::metadata(&local) {
-                Ok(meta) if meta.len() == f.size => sha256_of(&local).as_deref() != Some(&f.sha256),
-                _ => true,
-            }
-        })
-        .cloned()
-        .collect()
+///
+/// `on_checked` recebe quantos já foram conferidos. Numa instalação existente
+/// isso lê e hasheia centenas de MB e leva dezenas de segundos — sem avisar, a
+/// tela fica parada e parece travada.
+pub fn files_to_download(
+    dir: &Path,
+    manifest: &Manifest,
+    mut on_checked: impl FnMut(u32),
+) -> Vec<ManifestFile> {
+    let mut pending = Vec::new();
+
+    for (index, f) in manifest.files.iter().enumerate() {
+        let local = dir.join(f.path.replace('/', std::path::MAIN_SEPARATOR_STR));
+        let up_to_date = match std::fs::metadata(&local) {
+            Ok(meta) if meta.len() == f.size => sha256_of(&local).as_deref() == Some(&f.sha256),
+            _ => false,
+        };
+
+        if !up_to_date {
+            pending.push(f.clone());
+        }
+
+        // A cada 50 para nao inundar a webview de eventos.
+        if index % 50 == 0 {
+            on_checked(index as u32);
+        }
+    }
+
+    on_checked(manifest.files.len() as u32);
+    pending
 }
 
 async fn fetch_manifest(url: &str) -> Result<Manifest, String> {
@@ -180,9 +197,11 @@ pub async fn check_update(state: State<'_, AppState>) -> Result<serde_json::Valu
 /// de cada vez, com ~250 ms de ida-e-volta por requisição, seriam ~35 minutos
 /// gastos em latência — a banda fica ociosa o tempo todo, esperando resposta.
 ///
-/// 12 é um meio-termo: derruba o tempo em uma ordem de grandeza sem transformar
-/// a instalação de um jogador num teste de carga contra a nossa API.
-const CONCURRENCY: usize = 12;
+/// 16 é um meio-termo: derruba o tempo em uma ordem de grandeza sem transformar
+/// a instalação de um jogador num teste de carga contra a nossa API. Medido em
+/// ~6 MB/s com 12; o gargalo aqui é latência, não banda, então subir o número
+/// ajuda até o ponto em que a VPS começa a reclamar — não além.
+const CONCURRENCY: usize = 16;
 
 /// Baixa um arquivo, confere o sha256 e o instala.
 ///
@@ -213,7 +232,17 @@ async fn download_one(
         return Err(format!("servidor respondeu {} ao baixar {}", response.status(), file.path));
     }
 
-    let temp = dest.with_extension("kbpart");
+    // APPEND, nao with_extension: aquele SUBSTITUI a extensao, e numa pasta de
+    // campanha "AED01.dat", "AED01.map" e "AED01.script" virariam todos
+    // "AED01.kbpart". Sequencialmente nunca colidia, porque cada um era
+    // renomeado antes do proximo; com downloads concorrentes, duas tarefas
+    // gravam no mesmo arquivo ao mesmo tempo.
+    let temp = {
+        let mut p = dest.clone().into_os_string();
+        p.push(".kbpart");
+        PathBuf::from(p)
+    };
+
     let mut out = tokio::fs::File::create(&temp)
         .await
         .map_err(|e| format!("não foi possível gravar {}: {e}", file.path))?;
@@ -276,9 +305,26 @@ pub async fn install_update(app: AppHandle, release: LatestRelease) -> Result<()
     let pending = {
         let dir = dir.clone();
         let manifest = manifest.clone();
-        tokio::task::spawn_blocking(move || files_to_download(&dir, &manifest))
-            .await
-            .map_err(|e| format!("falha ao comparar arquivos: {e}"))?
+        let app = app.clone();
+        let files_total = manifest.files.len() as u32;
+        tokio::task::spawn_blocking(move || {
+            files_to_download(&dir, &manifest, |checked| {
+                let _ = app.emit(
+                    "install-progress",
+                    Progress {
+                        phase: "verificando".into(),
+                        current_file: String::new(),
+                        files_done: checked,
+                        files_total,
+                        bytes_done: 0,
+                        bytes_total: 0,
+                        bytes_per_second: 0,
+                    },
+                );
+            })
+        })
+        .await
+        .map_err(|e| format!("falha ao comparar arquivos: {e}"))?
     };
 
     let bytes_total: u64 = pending.iter().map(|f| f.size).sum();
@@ -339,16 +385,22 @@ pub async fn install_update(app: AppHandle, release: LatestRelease) -> Result<()
 
     // Primeiro erro aborta o resto: insistir depois de uma falha so faria o
     // jogador esperar mais para receber a mesma mensagem.
+    //
+    // O PRIMEIRO erro e que vale. Depois do abort_all as demais tarefas
+    // retornam "cancelada", e sobrescrever com elas trocaria a causa real por
+    // ruido -- o jogador leria "tarefa cancelada" sem saber o que houve.
     let mut failure: Option<String> = None;
     while let Some(joined) = tasks.join_next().await {
-        match joined {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => {
+        let result = match joined {
+            Ok(inner) => inner,
+            // Cancelamento e consequencia do nosso proprio abort_all.
+            Err(e) if e.is_cancelled() => continue,
+            Err(e) => Err(format!("tarefa de download falhou: {e}")),
+        };
+
+        if let Err(e) = result {
+            if failure.is_none() {
                 failure = Some(e);
-                tasks.abort_all();
-            }
-            Err(e) => {
-                failure = Some(format!("tarefa de download falhou: {e}"));
                 tasks.abort_all();
             }
         }
@@ -409,11 +461,28 @@ mod tests {
         }
     }
 
+    /// with_extension substituiria a extensao, fazendo "AED01.dat" e
+    /// "AED01.map" -- vizinhos reais numa pasta de campanha -- disputarem o
+    /// mesmo arquivo temporario quando baixados em paralelo.
+    #[test]
+    fn temporarios_de_vizinhos_nao_colidem() {
+        let dir = PathBuf::from("Campaigns").join("AED");
+        let temp_of = |name: &str| {
+            let mut p = dir.join(name).into_os_string();
+            p.push(".kbpart");
+            PathBuf::from(p)
+        };
+
+        assert_ne!(temp_of("AED01.dat"), temp_of("AED01.map"));
+        assert_ne!(temp_of("AED01.dat"), temp_of("AED01.script"));
+        assert!(temp_of("AED01.dat").to_string_lossy().ends_with("AED01.dat.kbpart"));
+    }
+
     #[test]
     fn baixa_tudo_quando_nada_existe() {
         let dir = temp_dir("vazio");
         let m = manifest_of(&[("a.txt", "aaa"), ("sub/b.txt", "bbb")]);
-        assert_eq!(files_to_download(&dir, &m).len(), 2);
+        assert_eq!(files_to_download(&dir, &m, |_| {}).len(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -422,7 +491,7 @@ mod tests {
         let dir = temp_dir("identico");
         std::fs::write(dir.join("a.txt"), "aaa").unwrap();
         let m = manifest_of(&[("a.txt", "aaa")]);
-        assert!(files_to_download(&dir, &m).is_empty(), "arquivo igual nao deveria ser rebaixado");
+        assert!(files_to_download(&dir, &m, |_| {}).is_empty(), "arquivo igual nao deveria ser rebaixado");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -433,7 +502,7 @@ mod tests {
         let dir = temp_dir("mesmo-tamanho");
         std::fs::write(dir.join("a.txt"), "xxx").unwrap();
         let m = manifest_of(&[("a.txt", "aaa")]);
-        assert_eq!(files_to_download(&dir, &m).len(), 1);
+        assert_eq!(files_to_download(&dir, &m, |_| {}).len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -442,7 +511,7 @@ mod tests {
         let dir = temp_dir("truncado");
         std::fs::write(dir.join("a.txt"), "aa").unwrap();
         let m = manifest_of(&[("a.txt", "aaa")]);
-        assert_eq!(files_to_download(&dir, &m).len(), 1);
+        assert_eq!(files_to_download(&dir, &m, |_| {}).len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
