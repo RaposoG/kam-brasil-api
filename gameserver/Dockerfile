@@ -18,9 +18,24 @@ RUN apt-get update \
 
 ARG GAME_REPO=https://github.com/RaposoG/kam_brasil.git
 ARG GAME_REF=master
+ARG GAME_API=https://api.github.com/repos/RaposoG/kam_brasil/commits
 
 WORKDIR /src
-RUN git clone --depth 1 --branch "$GAME_REF" "$GAME_REPO" .
+
+# Este ADD existe só para invalidar o cache do clone abaixo.
+#
+# `git clone` é uma camada como qualquer outra: o Docker olha o texto do comando,
+# vê que não mudou e reaproveita o clone antigo — para sempre. O servidor
+# continuaria sendo compilado de um commit velho, em silêncio, e foi exatamente
+# o que aconteceu: um deploy falhou compilando código que já estava corrigido no
+# repositório havia horas.
+#
+# A resposta desta URL muda quando GAME_REF aponta para outro commit, então a
+# camada muda junto e o clone roda de novo.
+ADD ${GAME_API}/${GAME_REF} /tmp/game-commit.json
+
+RUN git clone --depth 1 --branch "$GAME_REF" "$GAME_REPO" . \
+ && echo "compilando de $(git rev-parse --short HEAD)"
 
 WORKDIR /src/Utils/DedicatedServer
 
