@@ -80,4 +80,13 @@ if (config.announceAllowedIps.length === 0) {
   app.log.warn('ANNOUNCE_ALLOWED_IPS vazio: qualquer origem pode anunciar servidor. Não use assim em produção.')
 }
 
+if (!config.GAME_SERVER_PUBLIC_ADDRESS) {
+  // Aviso, não erro: derrubar login e download por causa disto seria trocar um
+  // problema pequeno por um grande.
+  app.log.warn(
+    'GAME_SERVER_PUBLIC_ADDRESS vazio: a lista publicará o IP de quem anunciou. ' +
+      'Vindo de container isso é um endereço interno, e ninguém consegue conectar.',
+  )
+}
+
 await app.listen({ port: config.API_PORT, host: config.API_HOST })

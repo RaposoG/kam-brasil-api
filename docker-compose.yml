@@ -57,9 +57,14 @@ services:
       # X-Forwarded-For -- senao qualquer um se passaria por interno.
       ANNOUNCE_ALLOWED_IPS: ${ANNOUNCE_ALLOWED_IPS:-127.0.0.1}
       VERIFY_ALLOWED_IPS: ${VERIFY_ALLOWED_IPS:-127.0.0.1}
-      # Endereco que vai para a lista de servidores. Sem isto os jogadores
-      # receberiam o IP interno do container e nao conectariam em nada.
-      GAME_SERVER_PUBLIC_ADDRESS: ${GAME_SERVER_PUBLIC_ADDRESS:?defina o IP publico do VPS no .env}
+      # Endereco que vai para a lista de servidores. Sem ele os jogadores
+      # recebem o IP interno do container e nao conectam em nada -- mas a API
+      # sobe assim mesmo, e avisa no log.
+      #
+      # Ja foi obrigatorio (`:?`) e isso derrubou a plataforma inteira: sem a
+      # variavel o compose recusava subir, e conta, login e download caiam junto
+      # por causa de um endereco que so afeta a lista de servidores.
+      GAME_SERVER_PUBLIC_ADDRESS: ${GAME_SERVER_PUBLIC_ADDRESS:-}
       SOURCES_DIR: /app/sources
       # Repositorio cujas GitHub Releases carregam os binarios compilados.
       BINARIES_REPO: ${BINARIES_REPO:-RaposoG/kam_brasil}
