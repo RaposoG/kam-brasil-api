@@ -31,15 +31,20 @@ await app.register(cors, { origin: true })
 // direto — mas ter a API servindo mantém o ambiente local autossuficiente.
 const releasesDir = resolve(config.RELEASES_DIR)
 await mkdir(releasesDir, { recursive: true })
-// octet-stream em tudo, sempre: aqui não se renderiza nada, só se baixa bytes.
-// Não é preciosismo — o Cloudflare reescreve respostas `text/html` em trânsito
-// (injeta Speculation Rules, ofusca e-mails), e os Readme_*.html chegavam ao
-// jogador 1,7 KB maiores do que o sha256 do manifesto. Sem tipo pra mexer, ele
-// repassa os bytes intactos.
-await app.register(fastifyStatic, {
-  root: releasesDir,
-  prefix: '/downloads/',
-  setHeaders: (res) => res.setHeader('content-type', 'application/octet-stream'),
+await app.register(fastifyStatic, { root: releasesDir, prefix: '/downloads/' })
+
+// octet-stream em tudo que sai de /downloads/: aqui não se renderiza nada, só se
+// baixa bytes. Não é preciosismo — o Cloudflare reescreve respostas `text/html`
+// em trânsito (injeta Speculation Rules), e os Readme_*.html chegavam ao jogador
+// 1,7 KB maiores do que o sha256 do manifesto. Sem tipo pra mexer, ele repassa
+// os bytes intactos.
+//
+// Via hook, não via `setHeaders` do @fastify/static: aquele recebe um `res` cru
+// que sob o Bun não tem `setHeader`, e derrubava o processo a cada download.
+app.addHook('onSend', async (request, reply) => {
+  if (request.url.startsWith('/downloads/')) {
+    reply.header('content-type', 'application/octet-stream')
+  }
 })
 
 await app.register(authPlugin)
