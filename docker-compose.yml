@@ -54,8 +54,15 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-true}
       ANNOUNCE_ALLOWED_IPS: ${ANNOUNCE_ALLOWED_IPS:-}
       VERIFY_ALLOWED_IPS: ${VERIFY_ALLOWED_IPS:-127.0.0.1}
-    ports:
-      - "${API_PORT:-3000}:3000"
+    # Sem "ports": em producao quem roteia e o proxy do Dokploy (Traefik), que
+    # alcanca o container pela rede interna a partir do dominio configurado.
+    # Publicar no host colidiria com o painel do proprio Dokploy, que usa a 3000.
+    #
+    # Em desenvolvimento, docker-compose.override.yml publica a porta. O Compose
+    # carrega esse arquivo sozinho quando se roda `docker compose up` sem -f --
+    # e o Dokploy passa -f explicito, entao nunca o enxerga.
+    expose:
+      - "3000"
     volumes:
       # Releases sao centenas de MB e vivem em disco, nao no banco. Sem volume,
       # cada rebuild apagaria tudo.

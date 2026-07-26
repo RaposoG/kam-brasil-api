@@ -1,0 +1,19 @@
+# Ajustes de desenvolvimento local.
+#
+# O Compose carrega este arquivo automaticamente com `docker compose up`. O
+# Dokploy invoca com `-f ./docker-compose.yml` explicito, e nesse caso o Compose
+# NAO carrega overrides -- entao nada daqui vai para producao.
+
+services:
+  api:
+    # Publica a porta para dar para chamar a API da maquina. Em producao quem
+    # roteia e o Traefik do Dokploy, pela rede interna.
+    ports:
+      - "${API_PORT:-3000}:3000"
+
+  postgres:
+    # Descomente para inspecionar o banco com um cliente externo. Em producao
+    # ele nunca deve publicar porta.
+    # ports:
+    #   - "5434:5432"
+    profiles: []
