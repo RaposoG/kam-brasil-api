@@ -35,31 +35,46 @@ Monte um volume e aponte `RELEASES_DIR` para ele.
 Rodam sozinhas no boot. Um deploy nunca sobe com schema defasado, e não há passo
 manual entre o push e a API no ar.
 
-## O servidor de jogo fica ao lado
+## O servidor de jogo sobe junto
 
-O `KaM_DedicatedServer` é um processo separado, **na mesma máquina que a API**.
-Isso não é conveniência, é requisito:
+O serviço `gameserver` do compose. Ele **compila o `KaM_DedicatedServer` a partir
+do repositório do jogo** — nenhum binário é versionado aqui, e `GAME_REF` diz de
+qual commit. FPC compila o servidor mas não o cliente (18 arquivos usam inline
+vars do Delphi 10.3+), por isso só esta metade cabe num Dockerfile.
 
-`GET /auth/verify` recebe o ticket **na query string, em texto claro** — porque o
-cliente HTTP do Pascal (`KM_HTTPClient`) só faz GET, sem TLS e sem headers. Por
-isso `VERIFY_ALLOWED_IPS` defaulta para `127.0.0.1` e a rota responde 403 para
-qualquer outra origem.
+O `.ini` é escrito a cada boot a partir do ambiente: mudar nome ou porta é editar
+a env e reiniciar, sem rebuildar.
 
-Se algum dia o servidor de jogo precisar rodar em outra máquina, essa rota tem
-que virar HTTPS antes — e isso exige mexer no Pascal.
+### `network_mode: "service:api"` não é economia
 
-Configuração do servidor dedicado (`KaM Remake Server Settings.ini`):
+O servidor divide o namespace de rede da API. Isso resolve duas coisas de uma vez:
 
-```ini
-[Server]
-MasterServerAddressNew=https://kam-api.melhorzin.com/
-KamBrasilRequireAuth=1
-KamBrasilAuthVerifyUrl=http://127.0.0.1:3000/auth/verify
-UDPAnnounce=0
-```
+- Ele alcança `/auth/verify` em `127.0.0.1`. O ticket vai **na query string, em
+  texto claro** — o cliente HTTP do Pascal (`KM_HTTPClient`) só faz GET, sem TLS
+  e sem headers — então não pode sair da máquina.
+- O anúncio chega de um endereço que ninguém de fora forja, o que faz
+  `ANNOUNCE_ALLOWED_IPS=127.0.0.1` significar alguma coisa.
 
-`UDPAnnounce=0` porque temos master server próprio; a descoberta UDP só
-duplicaria o servidor na lista de quem estiver na mesma rede.
+Efeitos colaterais: a porta do jogo se publica no serviço `api`, e reiniciar a
+API exige reiniciar o gameserver junto.
+
+### `GAME_SERVER_PUBLIC_ADDRESS` é obrigatório
+
+O master original guardava o IP de quem anunciou, porque cada servidor era uma
+máquina pública anunciando de fora. O nosso anuncia de dentro do Docker — o IP de
+origem é interno, e publicá-lo mandaria todos os jogadores discarem para
+`127.0.0.1`. Sem essa variável o compose nem sobe.
+
+### Allowlist compara o socket, não o `X-Forwarded-For`
+
+`request.ip` obedece ao `X-Forwarded-For` quando `TRUST_PROXY=true` — e esse
+cabeçalho é escrito pelo cliente. Um allowlist que confiasse nele seria burlável
+por qualquer um mandando `X-Forwarded-For: 127.0.0.1`: daria para injetar
+servidores falsos na lista e chamar `/auth/verify` da internet.
+
+Por isso `serveradd.php` e `/auth/verify` usam `peerIp()`
+([api/src/peer-ip.ts](api/src/peer-ip.ts)), que lê o endereço do socket. Está
+coberto por teste — não troque por `request.ip`.
 
 ## Publicando uma release
 

@@ -32,6 +32,19 @@ const schema = z.object({
    */
   ANNOUNCE_ALLOWED_IPS: z.string().default(''),
 
+  /**
+   * Endereço público do servidor de jogo — o que vai para a lista e para onde os
+   * jogadores discam.
+   *
+   * Precisa ser configurado porque o servidor roda em container: o anúncio chega
+   * de um IP interno do Docker, e publicá-lo mandaria todo mundo conectar em
+   * 127.0.0.1. Aceita IP ou hostname.
+   *
+   * Vazio = usa o IP de quem anunciou, que é o comportamento do master original
+   * (cada servidor era uma máquina pública anunciando de fora).
+   */
+  GAME_SERVER_PUBLIC_ADDRESS: z.string().default(''),
+
   /** Mensagem exibida na aba multiplayer (announcements.php). */
   MOTD: z.string().default('Bem-vindo ao Kam Brasil!'),
 

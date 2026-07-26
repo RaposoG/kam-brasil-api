@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { LessThanOrEqual, MoreThan } from 'typeorm'
 import { config } from '../config.ts'
 import { gameServers } from '../data-source.ts'
+import { peerIp } from '../peer-ip.ts'
 
 /**
  * Compatibilidade com o master server original (os PHPs em Utils/MasterServer/).
@@ -25,13 +26,6 @@ function sanitizeServerName(raw: string): string {
   return raw.replace(/[,\r\n|]/g, ' ').trim().slice(0, 60)
 }
 
-/** `::ffff:127.0.0.1` e `::1` viram formas comparáveis com o allowlist. */
-function normalizeIp(ip: string): string {
-  if (ip.startsWith('::ffff:')) return ip.slice(7)
-  if (ip === '::1') return '127.0.0.1'
-  return ip
-}
-
 function isAnnounceAllowed(ip: string): boolean {
   // Lista vazia = qualquer origem pode anunciar. Só aceitável em desenvolvimento.
   if (config.announceAllowedIps.length === 0) return true
@@ -53,13 +47,23 @@ export default async function masterRoutes(app: FastifyInstance) {
   app.get('/serveradd.php', async (request, reply) => {
     reply.type('text/plain')
 
-    const ip = normalizeIp(request.ip)
+    // peerIp, nao request.ip: ver peer-ip.ts. Com X-Forwarded-For qualquer um
+    // se passaria por interno e injetaria servidores falsos na lista.
+    const origin = peerIp(request)
 
-    if (!isAnnounceAllowed(ip)) {
-      request.log.warn({ ip }, 'anuncio de servidor recusado: origem fora do allowlist')
+    if (!isAnnounceAllowed(origin)) {
+      request.log.warn({ ip: origin }, 'anuncio de servidor recusado: origem fora do allowlist')
       // Texto qualquer: o cliente descarta a resposta. Serve para o log/curl.
       return reply.code(403).send('forbidden')
     }
+
+    // O endereco que vai para a lista NAO e o de quem anunciou.
+    //
+    // O master original guardava o REMOTE_ADDR porque cada servidor era uma
+    // maquina publica anunciando de fora. O nosso roda em container, ao lado da
+    // API: o anuncio chega de um IP interno, e publica-lo mandaria todo mundo
+    // discar para 127.0.0.1. Por isso o endereco publico e configurado.
+    const ip = config.GAME_SERVER_PUBLIC_ADDRESS || origin
 
     const port = int(request, 'port')
     if (port < 1 || port > 65535) return reply.code(400).send('invalid port')

@@ -52,8 +52,14 @@ services:
       # Atras de nginx/Cloudflare tem que ser true, senao request.ip devolve o IP
       # do proxy e os allowlists abaixo viram enfeite.
       TRUST_PROXY: ${TRUST_PROXY:-true}
-      ANNOUNCE_ALLOWED_IPS: ${ANNOUNCE_ALLOWED_IPS:-}
+      # 127.0.0.1 porque o gameserver divide o namespace de rede com a API (ver
+      # network_mode abaixo). E a comparacao usa o endereco do socket, nao o
+      # X-Forwarded-For -- senao qualquer um se passaria por interno.
+      ANNOUNCE_ALLOWED_IPS: ${ANNOUNCE_ALLOWED_IPS:-127.0.0.1}
       VERIFY_ALLOWED_IPS: ${VERIFY_ALLOWED_IPS:-127.0.0.1}
+      # Endereco que vai para a lista de servidores. Sem isto os jogadores
+      # receberiam o IP interno do container e nao conectariam em nada.
+      GAME_SERVER_PUBLIC_ADDRESS: ${GAME_SERVER_PUBLIC_ADDRESS:?defina o IP publico do VPS no .env}
       SOURCES_DIR: /app/sources
       # Repositorio cujas GitHub Releases carregam os binarios compilados.
       BINARIES_REPO: ${BINARIES_REPO:-RaposoG/kam_brasil}
@@ -68,6 +74,10 @@ services:
     # e o Dokploy passa -f explicito, entao nunca o enxerga.
     expose:
       - "3000"
+    ports:
+      # A porta do jogo, publicada aqui e nao no gameserver, porque ele divide
+      # este namespace de rede. E TCP cru: o Traefik roteia HTTP, nao serve.
+      - "${SERVER_PORT:-56789}:${SERVER_PORT:-56789}"
     volumes:
       # Releases sao centenas de MB e vivem em disco, nao no banco. Sem volume,
       # cada rebuild apagaria tudo.
@@ -81,6 +91,39 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  gameserver:
+    build:
+      context: ./gameserver
+      args:
+        # De qual commit do jogo o servidor e compilado. Fixar uma tag aqui
+        # torna o build reproduzivel; master pega sempre o mais recente.
+        GAME_REF: ${GAME_REF:-master}
+    container_name: kambrasil-gameserver
+    restart: unless-stopped
+    depends_on:
+      api:
+        # Sem a API de pe o servidor anuncia no vazio e recusa todo mundo que
+        # tentar entrar, porque nao consegue verificar ticket nenhum.
+        condition: service_healthy
+    # Divide o namespace de rede da API. Nao e economia: e o que faz o servidor
+    # alcancar /auth/verify em 127.0.0.1 -- o ticket trafega em texto claro e nao
+    # pode sair da maquina -- e o que faz o anuncio chegar de um endereco que
+    # ninguem de fora consegue forjar.
+    #
+    # Efeito colateral: a porta do jogo se publica no servico `api`, acima, e
+    # reiniciar a API exige reiniciar este container junto.
+    network_mode: "service:api"
+    environment:
+      SERVER_NAME: ${SERVER_NAME:-Kam Brasil}
+      SERVER_PORT: ${SERVER_PORT:-56789}
+      MAX_ROOMS: ${MAX_ROOMS:-16}
+      WELCOME_MESSAGE: ${WELCOME_MESSAGE:-}
+      ANNOUNCE_INTERVAL: ${ANNOUNCE_INTERVAL:-180}
+      MASTER_SERVER_URL: http://127.0.0.1:3000/
+      AUTH_VERIFY_URL: http://127.0.0.1:3000/auth/verify
+      # 1 = so entra quem passou pelo launcher, com o nickname da conta.
+      REQUIRE_AUTH: ${REQUIRE_AUTH:-1}
 
 volumes:
   postgres-data:
