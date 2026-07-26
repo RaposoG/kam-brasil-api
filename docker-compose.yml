@@ -83,6 +83,16 @@ services:
       # A porta do jogo, publicada aqui e nao no gameserver, porque ele divide
       # este namespace de rede. E TCP cru: o Traefik roteia HTTP, nao serve.
       - "${SERVER_PORT:-56789}:${SERVER_PORT:-56789}"
+      # HTTP puro para o master server, sem passar pelo Traefik.
+      #
+      # O cliente do KaM nao fala TLS -- nao existe uma linha de SSL no
+      # KM_HTTPClientOverbyte -- e o Traefik do Dokploy responde 308 para HTTPS
+      # em qualquer requisicao HTTP. Desligar isso na mao nao adianta: o Dokploy
+      # regenera a config a cada deploy e o ajuste some. Ja aconteceu duas vezes.
+      #
+      # Publicando a porta aqui, a rota fica no nosso compose, versionada, e
+      # nenhum deploy a desfaz.
+      - "${MASTER_HTTP_PORT:-8081}:3000"
     volumes:
       # Releases sao centenas de MB e vivem em disco, nao no banco. Sem volume,
       # cada rebuild apagaria tudo.
