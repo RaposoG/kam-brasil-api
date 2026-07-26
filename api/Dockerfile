@@ -11,6 +11,12 @@ FROM oven/bun:1
 WORKDIR /app
 ENV NODE_ENV=production
 
+# git: a API monta as releases clonando os repositorios de conteudo (mapas,
+# textos, sprites da comunidade) em vez de receber meio giga por upload.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 # tsconfig.json NAO e opcional: e dele que o Bun le experimentalDecorators e

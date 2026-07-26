@@ -63,22 +63,58 @@ duplicaria o servidor na lista de quem estiver na mesma rede.
 
 ## Publicando uma release
 
-1. Buildar `KaM_Remake.exe` e `Utils/RXXPacker/RXXPacker.exe` no Delphi
-2. Copiar a árvore para uma pasta no servidor
-3. Registrar:
+São dois comandos, e você nunca envia meio giga.
+
+**1. Anexe os binários a uma GitHub Release** (no repositório público do jogo):
+
+```bash
+gh release create v1.0.0 \
+  KaM_Remake.exe "Utils/RXXPacker/RXXPacker.exe" \
+  --repo RaposoG/kam_brasil --title "Kam Brasil 1.0.0" --notes "Primeira versão"
+```
+
+Os anexos precisam se chamar exatamente `KaM_Remake.exe` e `RXXPacker.exe`.
+
+**2. Publique:**
 
 ```bash
 curl -X POST https://kam-api.melhorzin.com/client/releases \
   -H "x-admin-token: $ADMIN_TOKEN" -H 'content-type: application/json' \
-  -d '{"version":"1.0.0","gameRevision":"r16155","sourceDir":"/srv/kambrasil/staging"}'
+  -d '{"version":"1.0.0","gameRevision":"r16155","binariesTag":"v1.0.0"}'
 ```
 
-A API percorre a pasta, calcula o sha256 de cada arquivo e escreve o manifesto.
-Os hashes vêm sempre do disco, nunca do que foi informado.
+### O que a API faz sozinha
 
-**Não inclua** sprites, sons, músicas, `houses.dat` nem `unit.dat`. Eles vêm do
-Knights and Merchants original e são gerados na máquina do jogador — a API
-descarta esses caminhos automaticamente, mas o certo é não colocá-los ali.
+Ela monta a árvore no servidor, buscando cada parte da fonte natural:
+
+| Parte | Origem |
+|---|---|
+| `KaM_Remake.exe`, `RXXPacker.exe` | anexos da release informada |
+| textos, fontes, cursores, DLLs | `RaposoG/kam_brasil` |
+| mapas, campanhas, tutoriais | `reyandme/kam_remake_maps` |
+| sprites da comunidade | `reyandme/kam_remake_resources` |
+
+Depois calcula o sha256 de cada arquivo — sempre lendo do disco, nunca de algo
+informado — e escreve o manifesto.
+
+Os clones ficam em cache no volume `sources`; da segunda release em diante é
+`fetch`, não clone. E são rasos: o histórico do KaM tem 16 mil commits que não
+servem para nada aqui.
+
+**Por que assim:** o que muda a cada build são ~26 MB de binários. Mapas e
+campanhas são 417 MB e nunca mudam por causa de um build. Enviar tudo a cada
+versão seria pagar meio giga para trocar 26 MB.
+
+Efeito colateral bem-vindo: quando a comunidade publica mapas novos no upstream,
+a próxima release os inclui sem ninguém fazer nada.
+
+**Nunca entram:** sprites, sons, músicas, `houses.dat` e `unit.dat`. Vêm do
+Knights and Merchants original e são gerados na máquina do jogador.
+
+### Espaço em disco
+
+A montagem clona três repositórios (~640 MB somados, rasos) e escreve a árvore
+montada. Some a release publicada e reserve **uns 2 GB** para o volume.
 
 ## Checklist pós-deploy
 

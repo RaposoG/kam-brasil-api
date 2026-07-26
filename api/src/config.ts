@@ -45,6 +45,21 @@ const schema = z.object({
   RELEASES_DIR: z.string().default('./releases'),
 
   /**
+   * Cache dos repositórios que a API clona para montar uma release. Deve ser
+   * volume: sem ele, cada deploy reclona centenas de MB.
+   */
+  SOURCES_DIR: z.string().default('./sources'),
+
+  /** Repositório cujas GitHub Releases carregam os binários compilados. */
+  BINARIES_REPO: z.string().default('RaposoG/kam_brasil'),
+
+  /**
+   * Só necessário se BINARIES_REPO for privado. Anexos de repositório público
+   * baixam sem autenticação.
+   */
+  GITHUB_TOKEN: z.string().default(''),
+
+  /**
    * IPs autorizados a verificar tokens (`GET /auth/verify`), separados por vírgula.
    *
    * Quem consome essa rota é o servidor de jogo, que roda ao lado da API. O

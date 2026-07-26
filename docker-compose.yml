@@ -54,6 +54,11 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-true}
       ANNOUNCE_ALLOWED_IPS: ${ANNOUNCE_ALLOWED_IPS:-}
       VERIFY_ALLOWED_IPS: ${VERIFY_ALLOWED_IPS:-127.0.0.1}
+      SOURCES_DIR: /app/sources
+      # Repositorio cujas GitHub Releases carregam os binarios compilados.
+      BINARIES_REPO: ${BINARIES_REPO:-RaposoG/kam_brasil}
+      # So necessario se BINARIES_REPO for privado.
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     # Sem "ports": em producao quem roteia e o proxy do Dokploy (Traefik), que
     # alcanca o container pela rede interna a partir do dominio configurado.
     # Publicar no host colidiria com o painel do proprio Dokploy, que usa a 3000.
@@ -67,6 +72,9 @@ services:
       # Releases sao centenas de MB e vivem em disco, nao no banco. Sem volume,
       # cada rebuild apagaria tudo.
       - releases:/app/releases
+      # Cache dos repositorios de conteudo (mapas, textos, sprites). Sem volume,
+      # cada release reclonaria centenas de MB em vez de dar um fetch.
+      - sources:/app/sources
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
@@ -77,3 +85,4 @@ services:
 volumes:
   postgres-data:
   releases:
+  sources:

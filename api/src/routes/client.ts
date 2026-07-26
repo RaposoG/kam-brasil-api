@@ -7,12 +7,17 @@ import { z } from 'zod'
 import { config } from '../config.ts'
 import { clientReleases } from '../data-source.ts'
 import type { ClientRelease } from '../entities/client-release.ts'
+import { buildReleaseTree } from '../release-builder.ts'
 
 const publishSchema = z.object({
   version: z.string().regex(/^[0-9]+\.[0-9]+\.[0-9]+$/, 'versão deve ser no formato 1.2.3'),
   gameRevision: z.string().min(1).max(32),
-  /** Pasta no servidor com a árvore pronta para publicar. */
-  sourceDir: z.string().min(1),
+  /**
+   * Tag da GitHub Release que carrega os binários compilados
+   * (`KaM_Remake.exe` e `RXXPacker.exe`). O resto da árvore a API monta
+   * sozinha — ver release-builder.ts.
+   */
+  binariesTag: z.string().min(1).max(64),
   notes: z.string().max(4000).default(''),
   published: z.boolean().default(true),
 })
@@ -132,11 +137,14 @@ export default async function clientRoutes(app: FastifyInstance) {
   })
 
   /**
-   * Publica uma release a partir de uma árvore no servidor.
+   * Publica uma release.
    *
-   * A API percorre a pasta, calcula o sha256 de cada arquivo e escreve o
-   * manifesto. Hashes vêm sempre do disco, nunca do que o publicador informou —
-   * é o que garante que o manifesto descreve o que os jogadores vão baixar.
+   * O publicador envia apenas a **tag** de uma GitHub Release com os binários;
+   * a API monta o resto da árvore clonando os repositórios de conteúdo (ver
+   * release-builder.ts) e então calcula o sha256 de cada arquivo.
+   *
+   * Hashes vêm sempre do disco, nunca de algo informado — é o que garante que o
+   * manifesto descreve exatamente o que os jogadores vão baixar.
    */
   app.post('/client/releases', async (request, reply) => {
     if (!config.ADMIN_TOKEN) {
@@ -151,13 +159,15 @@ export default async function clientRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: 'dados inválidos', issues: z.treeifyError(parsed.error) })
     }
 
-    const { version, gameRevision, sourceDir, notes, published } = parsed.data
+    const { version, gameRevision, binariesTag, notes, published } = parsed.data
 
-    const source = resolve(sourceDir)
+    // Montar clona repositorios e baixa binarios: pode levar minutos na
+    // primeira vez. Os passos vao para o log para dar o que acompanhar.
+    let source: string
     try {
-      if (!(await stat(source)).isDirectory()) throw new Error('não é pasta')
-    } catch {
-      return reply.code(400).send({ error: `pasta não encontrada: ${source}` })
+      source = await buildReleaseTree(binariesTag, (msg) => request.log.info({ version }, `release: ${msg}`))
+    } catch (error) {
+      return reply.code(400).send({ error: `falha ao montar a release: ${(error as Error).message}` })
     }
 
     const releaseDir = join(resolve(config.RELEASES_DIR), version)
