@@ -81,10 +81,13 @@ async function refresh() {
 }
 
 async function pickOriginal() {
-  const picked = await open({ directory: true, title: "Onde está o Knights and Merchants?" });
-  if (typeof picked !== "string") return;
   error.value = "";
   try {
+    // O open() fica DENTRO do try: ele estava fora, e quando falhava (faltava a
+    // permissão dialog:allow-open nas capabilities) a exceção subia sem ninguém
+    // ver. O botão parecia simplesmente morto.
+    const picked = await open({ directory: true, title: "Onde está o Knights and Merchants?" });
+    if (typeof picked !== "string") return;
     original.value = await checkOriginalGame(picked);
   } catch (e) {
     error.value = String(e);
