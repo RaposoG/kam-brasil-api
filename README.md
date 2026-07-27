@@ -1,200 +1,117 @@
-# brasil/ — plataforma online do Kam Brasil
+# Kam Brasil — plataforma
 
-Tudo que não é a engine do jogo mora aqui. Esta pasta é isolada de propósito: o upstream
-`reyandme/kam_remake` nunca vai criar um diretório `brasil/`, então nada daqui entra em
-conflito quando puxamos as atualizações deles.
+A infraestrutura online da comunidade brasileira de **Knights and Merchants**:
+contas, lista de servidores, distribuição do jogo e o launcher que amarra tudo.
+
+A engine do jogo não mora aqui — ela vive em
+[RaposoG/kam_brasil](https://github.com/RaposoG/kam_brasil), um fork do
+[KaM Remake](https://github.com/reyandme/kam_remake).
 
 ```
-brasil/
-├── docker-compose.yml   PostgreSQL 18
-├── .env               ← criado por você a partir de .env.example (não versionado)
-├── api/                 Fastify + TypeORM  — contas, tokens, lista de servidores
-└── launcher/            Tauri + Vue        — login, atualização automática
+api/           Fastify + TypeORM   contas, tickets, master server, releases
+launcher/      Tauri + Vue         login, instalação e atualização do jogo
+gameserver/    Dockerfile          compila e roda o KaM_DedicatedServer
 ```
 
-## Pré-requisitos
+## Como as peças conversam
 
-| Ferramenta | Para quê | Situação |
-|---|---|---|
-| [Bun](https://bun.sh) | runtime e gerenciador de pacotes | ✅ instalado |
-| [Docker](https://docker.com) | PostgreSQL local | ✅ instalado |
-| [Rust](https://rustup.rs) + MSVC Build Tools | compilar o launcher Tauri | ⚠️ **ainda não instalado** |
+O jogador instala **só o launcher**. Ele cria a conta, baixa o jogo da API, gera
+localmente os arquivos derivados da cópia original de Knights and Merchants e
+abre o jogo já autenticado.
 
-O Rust só é necessário para buildar o launcher. A API roda sem ele.
+```
+launcher  ──HTTPS──▶  API          conta, releases, download
+   │
+   └─ abre o jogo com um ticket curto
+                          │
+        jogo  ──HTTP───▶  API      lista de servidores
+                          ▲
+        servidor dedicado ─┘       valida o ticket em 127.0.0.1
+```
 
----
+Duas assimetrias explicam quase todas as decisões do projeto:
 
-## Subindo o banco
+**O cliente do jogo não fala TLS.** O `KM_HTTPClientOverbyte` usa o `THTTPCli` do
+ICS sem `SslContext` — não existe uma linha de SSL nele. Por isso a lista de
+servidores trafega em HTTP puro, o ticket de partida vai na query string, e a
+rota que o valida só aceita `127.0.0.1`.
+
+**Nada que veio do jogo comercial é distribuído.** Sprites, sons, músicas e os
+`.dat` de casas e unidades ficam de fora das releases: são gerados na máquina do
+jogador a partir da cópia que ele possui. É por isso que o launcher exige achar o
+Knights and Merchants original antes de deixar jogar.
+
+## Rodando local
+
+Precisa de [Bun](https://bun.sh) e [Docker](https://docker.com). Para o launcher,
+também [Rust](https://rustup.rs) com as MSVC Build Tools.
 
 ```bash
-cd brasil && cp .env.example .env && docker compose up -d
+cp .env.example .env   # só JWT_SECRET é obrigatório
+docker compose up -d
 ```
 
-O Postgres sobe na porta definida em `POSTGRES_PORT` (padrão `5432`), com volume nomeado —
-os dados sobrevivem a `docker compose down`. Para zerar tudo:
+O `docker-compose.override.yml` publica a porta 3000 em desenvolvimento; o
+Compose o carrega sozinho quando você roda sem `-f`.
 
 ```bash
-docker compose down -v
+cd api && bun run dev
+cd launcher && bun run tauri dev
 ```
 
-## Rodando a API
+Testes:
 
 ```bash
-cd brasil/api && bun install && bun run dev
+cd api && bun test
+cd launcher/src-tauri && cargo test --lib
 ```
 
-Sobe em `http://localhost:3000` com reload automático. Health check:
+Por padrão o launcher fala com a API de produção. Para apontar à local, compile
+com `KAMBRASIL_API=http://localhost:3000`.
 
-```bash
-curl http://localhost:3000/health
-```
-
-Deve responder `{"status":"ok","database":"connected"}` — é a forma rápida de confirmar que
-a API está de pé e que ela enxerga o Postgres.
-
-As migrations rodam sozinhas no boot — um deploy nunca sobe com schema defasado.
-
-### Estrutura da API
-
-```
-api/src/
-├── server.ts       bootstrap do Fastify
-├── config.ts       env validado por zod (falha no boot se algo faltar)
-├── data-source.ts  TypeORM
-├── entities/       Account, Session, GameServer
-├── migrations/     versionamento do schema
-├── plugins/auth.ts JWT + verificação de sessão
-└── routes/
-    ├── auth.ts     contas
-    └── master.ts   compatibilidade com o cliente do jogo
-```
-
-### Endpoints de conta
-
-Todos em JSON. Enviar `Content-Type: application/json`.
-
-| Método | Rota | O que faz |
-|---|---|---|
-| `POST` | `/auth/register` | `{ email, nickname, password }` → 201. 409 se email/nick em uso |
-| `POST` | `/auth/login` | `{ login, password }` — `login` aceita email **ou** nickname → `{ token, expiresAt, account }` |
-| `GET` | `/auth/me` | requer `Authorization: Bearer <token>` |
-| `POST` | `/auth/logout` | revoga a sessão daquele token |
-
-Regras aplicadas:
-
-- **Nickname**: 3–16 caracteres, apenas `A-Z a-z 0-9 _ -`. O limite de 16 não é
-  arbitrário: é o `MP_NICKNAME_LENGTH_MAX` do jogo. O charset restrito evita `|`
-  (quebra de linha na UI do KaM) e `[$RRGGBB]` (código de cor).
-- **Email e nickname** são únicos *case-insensitive*, garantidos por índice em
-  `lower()` — não dá para registrar `Gabriel` e `gabriel`.
-- **Senha**: mínimo 8 caracteres, guardada com **argon2id**.
-- **Login errado e conta inexistente** devolvem a mesma mensagem, para não
-  entregar quais emails existem.
-- O JWT carrega o id da sessão em `jti`. Toda requisição autenticada confere a
-  sessão no banco — sem isso, logout não teria efeito até o token expirar.
-
-### Endpoints de release do cliente
-
-| Método | Rota | O que faz |
-|---|---|---|
-| `GET` | `/client/latest` | versão que os jogadores devem estar rodando. 404 se nada publicado |
-| `GET` | `/client/releases` | histórico das 20 últimas |
-| `POST` | `/client/releases` | publica. Exige header `x-admin-token` |
-| `GET` | `/downloads/<arquivo>` | serve o binário |
-
-Para publicar: coloque o executável em `api/releases/` e chame
-
-```bash
-curl -X POST http://localhost:3000/client/releases \
-  -H "x-admin-token: $ADMIN_TOKEN" -H 'content-type: application/json' \
-  -d '{"version":"1.0.0","gameRevision":"r16155","fileName":"KaM_Brasil_1.0.0.exe"}'
-```
-
-A API calcula o **sha256 e o tamanho lendo o arquivo em disco**, em vez de
-confiar no que foi enviado — assim o hash sempre corresponde ao que os clientes
-vão de fato baixar. Releases são imutáveis: republicar a mesma versão dá 409,
-porque isso invalidaria o hash que alguém já baixou.
-
-Sem `ADMIN_TOKEN` no `.env`, a rota de publicação responde 503. É o padrão
-seguro: ninguém publica por acidente.
-
-### Endpoints do master server
+## Endpoints do master server
 
 Estas rotas existem para o **cliente do jogo**, que monta as URLs em
-`KM_NetServerLocator.pas`. Os nomes e o formato de resposta são fixos no Pascal:
-mudar qualquer coisa aqui exigiria recompilar o jogo. Respondem texto puro.
+`KM_NetServerLocator.pas`. Os nomes e o formato são fixos no Pascal — mudar
+qualquer coisa aqui exigiria recompilar o jogo. Respondem texto puro.
 
 | Rota | Resposta |
 |---|---|
-| `GET /serveradd.php` | `success` — registra/atualiza um servidor |
+| `GET /serveradd.php` | `success` — registra ou atualiza um servidor |
 | `GET /serverquery.php?rev=` | uma linha por servidor: `Nome,IP,Porta,Dedicado,SO` |
-| `GET /announcements.php` | o `MOTD` do `.env`, exibido na aba multiplayer |
-| `GET /maps.php` | `success` — o cliente reporta a partida jogada (só logamos) |
+| `GET /announcements.php` | o `MOTD`, exibido na aba multijogador |
+| `GET /maps.php` | `success` — o cliente reporta a partida jogada |
 
 ⚠️ **O parser do cliente exige exatamente 5 campos por linha** e faz split por
-vírgula ([KM_NetServerPoller.pas](../src/net/KM_NetServerPoller.pas) → `AddFromText`).
-Uma vírgula no nome do servidor gera 6 campos e a linha é **descartada em silêncio**.
-Por isso `serveradd` sanitiza o nome removendo `,`, `|` e quebras de linha.
+vírgula. Uma vírgula no nome do servidor gera 6 campos e a linha é **descartada
+em silêncio** — por isso `serveradd` remove `,`, `|` e quebras de linha do nome.
 
-A listagem filtra por `rev` (o `NET_PROTOCOL_REVISON`): builds de protocolos
-diferentes não se enxergam, que é o comportamento correto — elas não conseguiriam
-jogar juntas mesmo.
+A listagem filtra por `rev`, que é o `NET_PROTOCOL_REVISON` e **não** a revisão do
+jogo. São números diferentes: builds de protocolos distintos não se enxergam, que
+é o certo — elas não conseguiriam jogar juntas mesmo.
 
-### Como "só os nossos servidores" é garantido
+## Publicando
 
-O jogo **não envia credencial nenhuma** no `serveradd.php` — os parâmetros são
-fixos no Pascal. A única forma de controlar quem entra na lista sem alterar o
-cliente é filtrar pela origem, via `ANNOUNCE_ALLOWED_IPS` no `.env`.
+**Uma versão do jogo** é montada pela própria API: você anexa os binários
+compilados a uma GitHub Release do repositório do jogo e chama
+`POST /client/releases`. Ela clona os repositórios de conteúdo, monta a árvore,
+calcula os hashes lendo do disco e gera o pacote. Detalhes em [DEPLOY.md](DEPLOY.md).
 
-Com a variável vazia, qualquer um anuncia (a API loga um aviso no boot). Em
-produção, preencha com o IP do nosso servidor dedicado. Note que isso também
-impede que jogadores hospedando partidas locais apareçam na lista — que é
-exatamente o desenho pretendido.
-
-Se a API estiver atrás de nginx ou Cloudflare, ligue `TRUST_PROXY=true`, senão
-todo request chega com o IP do proxy e o allowlist vira inútil.
-
-### Apontando o jogo para a API local
-
-Crie `KaM Remake Server Settings.ini` na raiz do repositório:
-
-```ini
-[Server]
-MasterServerAddressNew=http://localhost:3000/
-```
-
-Não é preciso recompilar nada — o endereço é lido do `.ini` em tempo de execução
-([KM_ServerSettings.pas](../src/settings/KM_ServerSettings.pas)). Abra o jogo e
-entre na aba Multijogador para ver a lista vinda da nossa API.
-
-## Launcher
-
-Ainda não inicializado. Quando o Rust estiver instalado:
+**Uma versão do launcher** sai de uma tag:
 
 ```bash
-cd brasil && bun create tauri-app launcher --template vue-ts --manager bun
+git tag launcher-v1.2.3 && git push origin launcher-v1.2.3
 ```
 
-Preferimos o scaffold oficial a escrever a estrutura na mão — ele já configura a ponte
-Rust ↔ Vue, os ícones e o `tauri.conf.json` corretamente para a versão atual.
+A Action builda no Windows, roda os testes, assina e publica a release com o
+`latest.json` que o updater consulta. Quem já tem o launcher instalado recebe a
+atualização sozinho.
 
----
+## Créditos
 
-## Como isso conversa com o jogo
+O jogo é o **KaM Remake**, de [reyandme](https://github.com/reyandme/kam_remake) e
+colaboradores. Este projeto acrescenta uma camada de contas e servidores para a
+comunidade brasileira; o mérito da engine é inteiramente deles.
 
-O cliente do KaM lê o endereço do master server de um `.ini`, não de código compilado:
-
-```ini
-; KaM_Remake_Settings.ini
-[Server]
-MasterServerAddressNew=http://localhost:3000/
-```
-
-Ou seja: apontar o jogo para a nossa API **não exige recompilar nada**. Os PHPs em
-[../Utils/MasterServer/](../Utils/MasterServer/) são a especificação do contrato que a
-nossa API precisa atender (`serverquery`, `serveradd`, `servertime`).
-
-O servidor de jogo em si é um processo separado — o `KaM_DedicatedServer`, binário Pascal
-que escuta TCP na porta 56789 e hospeda várias salas. Ele roda **ao lado** da API, não
-dentro dela. A API é a autoridade sobre contas e sobre quais servidores existem; o tráfego
-de partida não passa por ela.
+*Knights and Merchants* é propriedade de seus respectivos detentores. Nada do
+jogo original é redistribuído aqui — você precisa possuir uma cópia.

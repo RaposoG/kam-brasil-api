@@ -36,6 +36,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "publisher": "Kam Brasil",
     "copyright": "Kam Brasil — comunidade brasileira de Knights and Merchants",
     "shortDescription": "Launcher do Kam Brasil",
