@@ -32,16 +32,53 @@ pub fn game_status() -> GameStatus {
     }
 }
 
-/// Onde o KaM guarda configurações do jogador.
+/// A pasta de configurações que **todas** as instalações de KaM Remake do
+/// usuário compartilham: `Documentos\My Games\Knights and Merchants Remake\`.
 ///
-/// Espelha `CreateAndGetDocumentsSavePath` do Pascal:
-/// `Documentos\My Games\Knights and Merchants Remake\`. **Não é** a pasta do
-/// jogo — `USE_KMR_DIR_FOR_SETTINGS` só vale em builds de debug.
+/// Não escrevemos mais aqui — só limpamos o que já escrevemos (ver
+/// `reparar_configuracao_compartilhada`). Nossa build usa a própria pasta,
+/// porque `USE_KMR_DIR_FOR_SETTINGS` está ligado nela.
 ///
 /// Usa a API de pastas conhecidas em vez de montar `%USERPROFILE%\Documents`,
 /// porque Documentos pode estar redirecionado (OneDrive, por exemplo).
-fn kam_settings_dir() -> Option<PathBuf> {
+fn pasta_compartilhada_do_kam() -> Option<PathBuf> {
     dirs::document_dir().map(|d| d.join("My Games").join("Knights and Merchants Remake"))
+}
+
+/// Desfaz o estrago que versões anteriores deste launcher causaram.
+///
+/// Até a 1.0.1 gravávamos o master server na pasta compartilhada acima. Como ela
+/// vale para **qualquer** instalação de KaM Remake da máquina, quem tinha o KaM
+/// oficial ao lado do nosso passava a ver só os servidores do Kam Brasil na
+/// lista de multiplayer — para sempre, mesmo abrindo o outro jogo.
+///
+/// Removemos a linha apenas se o valor for o nosso: apagar um master server que
+/// a pessoa configurou à mão seria trocar um estrago por outro. Sem a linha, o
+/// KaM volta ao padrão dele (`http://master.kamremake.com/`).
+fn reparar_configuracao_compartilhada(api_base: &str) {
+    let Some(dir) = pasta_compartilhada_do_kam() else { return };
+    let ini = dir.join("KaM Remake Server Settings.ini");
+
+    let Ok(conteudo) = std::fs::read_to_string(&ini) else { return };
+
+    let nosso = master_url(api_base);
+    let mut mexeu = false;
+    let limpo: Vec<&str> = conteudo
+        .lines()
+        .filter(|linha| {
+            let e_nosso = linha
+                .strip_prefix("MasterServerAddressNew=")
+                .is_some_and(|v| v.trim().eq_ignore_ascii_case(nosso.trim()));
+            if e_nosso {
+                mexeu = true;
+            }
+            !e_nosso
+        })
+        .collect();
+
+    if mexeu {
+        let _ = std::fs::write(&ini, limpo.join("\r\n"));
+    }
 }
 
 /// Substitui o valor de um atributo dentro de um elemento XML.
@@ -92,7 +129,14 @@ fn master_url(api_base: &str) -> String {
 /// - **Master server** em `KaM Remake Server Settings.ini`. Sem isto o jogo
 ///   lista os servidores oficiais em vez dos nossos.
 fn configure_game(nickname: &str, api_base: &str) -> Result<(), String> {
-    let dir = kam_settings_dir().ok_or("não foi possível localizar a pasta Documentos")?;
+    // Tira o nosso master server da pasta compartilhada, se alguma versão
+    // anterior o tiver deixado lá.
+    reparar_configuracao_compartilhada(api_base);
+
+    // Daqui em diante, só a pasta do jogo. A build do Kam Brasil lê daqui
+    // (USE_KMR_DIR_FOR_SETTINGS), então nada que escrevemos afeta outra
+    // instalação de KaM Remake da máquina.
+    let dir = game_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("não foi possível criar {}: {e}", dir.display()))?;
 
     let xml_path = dir.join("KaM Remake Settings.xml");
@@ -195,6 +239,38 @@ mod tests {
 
     /// Uma URL https aqui trava o multiplayer inteiro: o cliente do jogo aborta
     /// com "SSL requires a context object" e nao lista servidor nenhum.
+    /// O reparo so pode remover a linha que NOS escrevemos. Apagar um master
+    /// server que a pessoa configurou a mao trocaria um estrago por outro.
+    #[test]
+    fn reparo_remove_so_o_nosso_master_server() {
+        let nosso = master_url("https://kam-api.melhorzin.com");
+        let alheio = "http://master.kamremake.com/";
+
+        let filtrar = |conteudo: &str| -> Vec<String> {
+            conteudo
+                .lines()
+                .filter(|l| {
+                    !l.strip_prefix("MasterServerAddressNew=")
+                        .is_some_and(|v| v.trim().eq_ignore_ascii_case(nosso.trim()))
+                })
+                .map(String::from)
+                .collect()
+        };
+
+        let com_o_nosso = format!("[Server]\r\nServerName=Teste\r\nMasterServerAddressNew={nosso}\r\nMaxRooms=8");
+        let r = filtrar(&com_o_nosso);
+        assert_eq!(r.len(), 3, "so a nossa linha deveria sair");
+        assert!(r.iter().any(|l| l.starts_with("ServerName=")), "o resto tem que ficar");
+        assert!(r.iter().any(|l| l.starts_with("MaxRooms=")));
+
+        let com_o_dele = format!("[Server]\r\nMasterServerAddressNew={alheio}\r\nMaxRooms=8");
+        let r = filtrar(&com_o_dele);
+        assert!(
+            r.iter().any(|l| l.contains(alheio)),
+            "master server de terceiro NAO pode ser removido"
+        );
+    }
+
     #[test]
     fn master_server_nunca_sai_em_https() {
         assert_eq!(master_url("https://kam-api.melhorzin.com"), "http://kam-api.melhorzin.com/");
