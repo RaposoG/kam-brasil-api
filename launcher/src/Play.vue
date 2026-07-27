@@ -263,7 +263,7 @@ onMounted(async () => {
         </section>
 
         <section v-else class="step">
-          <button class="primary" @click="onPlay">Jogar</button>
+          <button class="primary hero" @click="onPlay">Jogar</button>
           <div class="row center small muted">
             <span>Versão {{ check?.installedVersion }}</span>
             <button class="link" :disabled="checking" @click="refresh">
@@ -290,20 +290,22 @@ onMounted(async () => {
   gap: 0.5rem;
 }
 .step.warn {
-  padding: 0.8rem;
-  border: 1px solid rgba(224, 108, 108, 0.5);
-  border-radius: 8px;
+  padding: 0.85rem;
+  border: 1px solid rgba(208, 130, 114, 0.45);
+  border-radius: 3px;
+  background: rgba(208, 130, 114, 0.06);
 }
 .step.ok {
   gap: 0.15rem;
 }
 .step.update {
-  padding: 0.7rem;
-  border: 1px solid rgba(47, 111, 237, 0.5);
-  border-radius: 8px;
+  padding: 0.8rem;
+  border: 1px solid var(--gold-dim);
+  border-radius: 3px;
+  background: rgba(212, 162, 74, 0.08);
 }
 .path {
-  opacity: 0.55;
+  color: var(--muted);
   word-break: break-all;
 }
 .row {
@@ -318,14 +320,15 @@ onMounted(async () => {
   max-width: 60%;
 }
 .bar {
-  height: 8px;
-  border-radius: 4px;
+  height: 10px;
+  border-radius: 2px;
   overflow: hidden;
-  background: rgba(128, 128, 128, 0.25);
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.35);
 }
 .fill {
   height: 100%;
-  background: #2f6fed;
+  background: linear-gradient(180deg, #e0b45f, var(--gold-dim));
   transition: width 0.2s linear;
 }
 .bar.indeterminate .fill {
@@ -336,49 +339,17 @@ onMounted(async () => {
   0% { margin-left: -35%; }
   100% { margin-left: 100%; }
 }
-button.primary {
-  padding: 0.6rem;
-  border: none;
-  border-radius: 6px;
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-  background: #2f6fed;
-  color: #fff;
-  box-shadow: none;
-}
-button.primary:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-button.link {
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  text-decoration: underline;
-  box-shadow: none;
-}
-button.link:disabled {
-  cursor: default;
-  text-decoration: none;
+/* Os estilos de botao, .muted, .small, .center e .error vivem no bloco global
+   do App.vue: sao os mesmos nas duas telas, e duplicar aqui ja tinha feito o
+   Play ficar com o azul antigo depois de a paleta mudar. */
+
+/* O botao de jogar e o destino de tudo: merece o dobro da presenca. */
+button.primary.hero {
+  padding: 1rem;
+  font-family: var(--serif);
+  font-size: 1.3rem;
+  letter-spacing: 0.06em;
 }
 
-button.ghost {
-  padding: 0.5rem;
-  border: 1px solid rgba(128, 128, 128, 0.4);
-  border-radius: 6px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  box-shadow: none;
-}
-.small { font-size: 0.78rem; }
-.muted { opacity: 0.6; }
-.center { text-align: center; }
-.error { color: #e06c6c; margin: 0; }
 p { margin: 0; }
 </style>

@@ -72,6 +72,7 @@ async function onLogout() {
   <main class="app">
     <header class="brand">
       <h1>Kam Brasil</h1>
+      <p class="tagline">Knights and Merchants · comunidade brasileira</p>
       <p v-if="base.includes('localhost')" class="dev">API local · {{ base }}</p>
     </header>
 
@@ -79,13 +80,18 @@ async function onLogout() {
       <p class="muted">Restaurando sessão…</p>
     </section>
 
-    <section v-else-if="account" class="card">
-      <p class="welcome">Bem-vindo, <strong>{{ account.nickname }}</strong></p>
-      <p class="muted small">{{ account.email }}</p>
+    <section v-else-if="account" class="card wide">
+      <div class="account">
+        <div>
+          <p class="welcome">{{ account.nickname }}</p>
+          <p class="muted small">{{ account.email }}</p>
+        </div>
+        <button class="link" :disabled="busy" @click="onLogout">Sair</button>
+      </div>
+
+      <hr />
 
       <Play />
-
-      <button class="link" :disabled="busy" @click="onLogout">Sair da conta</button>
     </section>
 
     <section v-else class="card">
@@ -149,7 +155,7 @@ async function onLogout() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1.5rem;
+  gap: 1.6rem;
   padding: 2rem;
 }
 
@@ -158,27 +164,73 @@ async function onLogout() {
 }
 .brand h1 {
   margin: 0;
-  font-size: 2.2rem;
-  letter-spacing: 0.02em;
+  font-family: var(--serif);
+  font-size: 2.9rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--gold);
+  /* Relevo sutil: o dourado sozinho fica chapado sobre a pedra. */
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.6);
+}
+/* Filetes ladeando o título, no lugar de um brasão que exigiria imagem. */
+.brand h1::before,
+.brand h1::after {
+  content: "";
+  display: inline-block;
+  width: 2.2rem;
+  height: 1px;
+  vertical-align: middle;
+  margin: 0 0.9rem;
+  background: linear-gradient(90deg, transparent, var(--gold-dim), transparent);
+}
+.tagline {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 .dev {
-  margin: 0.35rem 0 0;
-  font-size: 0.75rem;
-  opacity: 0.55;
+  margin: 0.4rem 0 0;
+  font-size: 0.72rem;
+  color: var(--gold-dim);
 }
 
 .card {
   width: 100%;
-  max-width: 360px;
+  max-width: 380px;
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
-  padding: 1.5rem;
-  border: 1px solid rgba(128, 128, 128, 0.25);
-  border-radius: 10px;
+  padding: 1.6rem;
+  background: var(--wood);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  /* Luz vinda de cima, como um painel de madeira encerada. */
+  box-shadow:
+    inset 0 1px 0 rgba(212, 162, 74, 0.12),
+    0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.card.wide {
+  max-width: 470px;
 }
 .card.center {
   align-items: center;
+}
+
+hr {
+  width: 100%;
+  height: 1px;
+  margin: 0.2rem 0;
+  border: none;
+  background: linear-gradient(90deg, transparent, var(--border), transparent);
+}
+
+.account {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
 }
 
 .tabs {
@@ -187,95 +239,120 @@ async function onLogout() {
 }
 .tabs button {
   flex: 1;
-  padding: 0.5rem;
+  padding: 0.55rem;
   background: transparent;
-  border: 1px solid rgba(128, 128, 128, 0.3);
-  border-radius: 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
   cursor: pointer;
   font: inherit;
-  color: inherit;
-  opacity: 0.6;
+  font-size: 0.9rem;
+  color: var(--muted);
   box-shadow: none;
+  transition: color 0.15s, border-color 0.15s;
+}
+.tabs button:hover {
+  color: var(--parchment);
 }
 .tabs button.active {
-  opacity: 1;
-  border-color: currentColor;
+  color: var(--gold);
+  border-color: var(--gold-dim);
+  background: rgba(212, 162, 74, 0.07);
 }
 
 form {
   display: flex;
   flex-direction: column;
-  gap: 0.8rem;
+  gap: 0.85rem;
 }
 label {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
-  font-size: 0.85rem;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 input {
-  padding: 0.55rem 0.7rem;
-  border: 1px solid rgba(128, 128, 128, 0.35);
-  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
   font: inherit;
-  color: inherit;
-  background: transparent;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--parchment);
+  background: rgba(0, 0, 0, 0.25);
   box-shadow: none;
 }
 input:focus {
-  outline: 2px solid rgba(120, 160, 255, 0.5);
-  outline-offset: 1px;
-}
-
-button.primary {
-  padding: 0.6rem;
-  border: none;
-  border-radius: 6px;
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-  background: #2f6fed;
-  color: #fff;
-  box-shadow: none;
-}
-button.primary:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-button.link {
-  background: none;
-  border: none;
-  font: inherit;
-  color: inherit;
-  opacity: 0.6;
-  cursor: pointer;
-  text-decoration: underline;
-  box-shadow: none;
-}
-
-.bar {
-  width: 100%;
-  height: 8px;
-  appearance: none;
-  border: none;
-  border-radius: 4px;
-  overflow: hidden;
-  background: rgba(128, 128, 128, 0.25);
-}
-.bar::-webkit-progress-bar {
-  background: rgba(128, 128, 128, 0.25);
-}
-.bar::-webkit-progress-value {
-  background: #2f6fed;
+  outline: none;
+  border-color: var(--gold-dim);
+  box-shadow: 0 0 0 2px rgba(212, 162, 74, 0.18);
 }
 
 .welcome {
   margin: 0;
-  font-size: 1.1rem;
+  font-family: var(--serif);
+  font-size: 1.35rem;
+  color: var(--gold);
 }
+</style>
+
+<style>
+:root {
+  --stone: #1a1512;
+  --wood: #241d17;
+  --border: #4a3a28;
+  --gold: #d4a24a;
+  --gold-dim: #a87f38;
+  --parchment: #e8dcc8;
+  --muted: #a3927a;
+  --danger: #d08272;
+  --success: #94b96f;
+  --serif: Georgia, "Palatino Linotype", "Book Antiqua", serif;
+
+  font-family: "Segoe UI", Inter, system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+
+  color: var(--parchment);
+  /* Sem prefers-color-scheme: o tema e escuro de proposito. Uma versao clara
+     desta paleta nao existe -- pedra e madeira em fundo branco viram lama. */
+  background-color: var(--stone);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Textura de pedra: duas camadas de gradiente, sem imagem nenhuma -- a CSP do
+   Tauri bloqueia recurso externo, e embutir bitmap engordaria o binario. */
+body {
+  margin: 0;
+  overflow: hidden;
+  min-height: 100vh;
+  background-color: var(--stone);
+  background-image:
+    radial-gradient(ellipse at 50% -20%, rgba(212, 162, 74, 0.07), transparent 60%),
+    repeating-linear-gradient(
+      115deg,
+      rgba(255, 255, 255, 0.012) 0px,
+      rgba(255, 255, 255, 0.012) 1px,
+      transparent 1px,
+      transparent 7px
+    );
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* Compartilhados entre App e Play. */
 .muted {
-  opacity: 0.6;
+  color: var(--muted);
   margin: 0;
 }
 .small {
@@ -286,47 +363,65 @@ button.link {
 }
 .error {
   margin: 0;
-  color: #e06c6c;
+  color: var(--danger);
   font-size: 0.85rem;
 }
 .notice {
   margin: 0;
-  color: #57b877;
+  color: var(--success);
   font-size: 0.85rem;
 }
-</style>
 
-<style>
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+button.primary {
+  padding: 0.7rem;
+  border: 1px solid var(--gold-dim);
+  border-radius: 3px;
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  color: #241d17;
+  background: linear-gradient(180deg, #e0b45f, var(--gold-dim));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+button.primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #eec476, #b98d3f);
+}
+button.primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
+button.ghost {
+  padding: 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--parchment);
+  font: inherit;
+  cursor: pointer;
+  box-shadow: none;
+}
+button.ghost:hover {
+  border-color: var(--gold-dim);
+  color: var(--gold);
 }
 
-body {
-  margin: 0;
-  overflow: hidden;
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--muted);
+  cursor: pointer;
+  text-decoration: underline;
+  box-shadow: none;
 }
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #232323;
-  }
+button.link:hover:not(:disabled) {
+  color: var(--gold);
+}
+button.link:disabled {
+  cursor: default;
+  text-decoration: none;
 }
 </style>
