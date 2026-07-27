@@ -96,6 +96,43 @@ export const generateAssets = (originalPath: string): Promise<void> =>
 
 export const launchGame = (): Promise<void> => invoke('launch_game')
 
+// --- atualização do próprio launcher ---
+
+/**
+ * Procura uma versão nova **do launcher** (não do jogo) e instala.
+ *
+ * Só o Windows reinicia o processo sozinho ao terminar, então tratamos como se
+ * nunca reiniciasse: `onDone` avisa a interface antes.
+ *
+ * O pacote é verificado contra a chave pública embutida no binário. Um endpoint
+ * comprometido não consegue instalar nada — a assinatura não bateria.
+ */
+export async function updateLauncher(
+  onProgress?: (baixado: number, total: number) => void,
+): Promise<boolean> {
+  const { check } = await import('@tauri-apps/plugin-updater')
+  const update = await check()
+  if (!update) return false
+
+  let baixado = 0
+  let total = 0
+  await update.downloadAndInstall((e) => {
+    if (e.event === 'Started') total = e.data.contentLength ?? 0
+    else if (e.event === 'Progress') {
+      baixado += e.data.chunkLength
+      onProgress?.(baixado, total)
+    }
+  })
+  return true
+}
+
+/** Versão nova disponível do launcher, sem instalar. */
+export async function launcherUpdateAvailable(): Promise<string | null> {
+  const { check } = await import('@tauri-apps/plugin-updater')
+  const update = await check()
+  return update ? update.version : null
+}
+
 // --- eventos ---
 
 export const onInstallProgress = (handler: (p: InstallProgress) => void) =>

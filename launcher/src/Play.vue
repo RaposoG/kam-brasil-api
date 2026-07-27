@@ -12,9 +12,11 @@ import {
   findOriginalGame,
   generateAssets,
   installUpdate,
+  launcherUpdateAvailable,
   launchGame,
   onAssetProgress,
   onInstallProgress,
+  updateLauncher,
 } from "./api";
 
 /**
@@ -37,6 +39,11 @@ const original = ref<OriginalGame | null>(null);
 const assetsOk = ref(false);
 const download = ref<InstallProgress | null>(null);
 const assetStep = ref<AssetProgress | null>(null);
+
+// Atualização do próprio launcher, separada da do jogo.
+const launcherNova = ref<string | null>(null);
+const atualizandoLauncher = ref(false);
+const launcherPercent = ref(0);
 
 const mb = (bytes: number) => (bytes / 1024 / 1024).toFixed(0);
 
@@ -134,15 +141,53 @@ async function onPlay() {
   }
 }
 
+async function onUpdateLauncher() {
+  atualizandoLauncher.value = true;
+  error.value = "";
+  try {
+    await updateLauncher((baixado, total) => {
+      launcherPercent.value = total ? Math.round((baixado / total) * 100) : 0;
+    });
+    // No Windows o instalador reinicia o launcher; se chegarmos aqui, não houve.
+    launcherNova.value = null;
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    atualizandoLauncher.value = false;
+  }
+}
+
 onMounted(async () => {
   onInstallProgress((p) => (download.value = p));
   onAssetProgress((p) => (assetStep.value = p));
   await refresh();
+
+  // Depois do refresh e sem travar a tela: uma falha aqui não pode impedir
+  // ninguém de jogar. Sem rede, simplesmente não aparece o aviso.
+  try {
+    launcherNova.value = await launcherUpdateAvailable();
+  } catch {
+    launcherNova.value = null;
+  }
 });
 </script>
 
 <template>
   <div class="play">
+    <!-- 0. atualização do próprio launcher, acima de tudo: quem está com uma
+         versão velha pode estar com um bug já corrigido. -->
+    <section v-if="launcherNova" class="step update">
+      <template v-if="atualizandoLauncher">
+        <strong class="small">Atualizando o launcher…</strong>
+        <div class="bar"><div class="fill" :style="{ width: launcherPercent + '%' }" /></div>
+        <p class="small muted">Ele vai reiniciar sozinho ao terminar.</p>
+      </template>
+      <template v-else>
+        <strong class="small">Nova versão do launcher: {{ launcherNova }}</strong>
+        <button class="ghost" @click="onUpdateLauncher">Atualizar agora</button>
+      </template>
+    </section>
+
     <!-- 1. jogo original -->
     <section v-if="!original" class="step warn">
       <strong>Você precisa do jogo original</strong>
@@ -251,6 +296,11 @@ onMounted(async () => {
 }
 .step.ok {
   gap: 0.15rem;
+}
+.step.update {
+  padding: 0.7rem;
+  border: 1px solid rgba(47, 111, 237, 0.5);
+  border-radius: 8px;
 }
 .path {
   opacity: 0.55;

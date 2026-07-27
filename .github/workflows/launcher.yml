@@ -1,0 +1,79 @@
+# Publica uma versão do launcher.
+#
+# Dispara ao empurrar uma tag `launcher-v*`:
+#
+#   git tag launcher-v1.0.3 && git push origin launcher-v1.0.3
+#
+# A tag manda na versão: o job confere que ela bate com a do tauri.conf.json e
+# falha se divergir. Uma release cujo número não corresponde ao binário é pior
+# que nenhuma — o updater compara versões para decidir se atualiza, e um número
+# errado deixa todo mundo preso ou em laço de atualização.
+name: Launcher
+
+on:
+  push:
+    tags: ["launcher-v*"]
+  # Permite um build de teste sem publicar nada.
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      # Necessário para criar a release e anexar os instaladores.
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Compilar o Rust do zero leva vários minutos; o cache derruba isso para
+      # menos de um em builds seguintes.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: launcher/src-tauri
+
+      - name: Instalar dependências
+        working-directory: launcher
+        run: bun install --frozen-lockfile
+
+      - name: Conferir que a tag bate com a versão do launcher
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#launcher-v}"
+          cfg=$(bun --print "require('./launcher/src-tauri/tauri.conf.json').version")
+          echo "tag=$tag  tauri.conf.json=$cfg"
+          if [ "$tag" != "$cfg" ]; then
+            echo "::error::a tag diz $tag mas o tauri.conf.json diz $cfg"
+            exit 1
+          fi
+
+      - name: Rodar os testes
+        working-directory: launcher/src-tauri
+        run: cargo test --lib
+
+      - name: Build, assinatura e release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Sem esta chave o pacote sai sem assinatura e o updater o recusa.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: launcher
+          tagName: ${{ github.ref_name }}
+          releaseName: "Launcher __VERSION__"
+          releaseBody: |
+            Instalador do launcher do Kam Brasil.
+
+            Quem já tem o launcher instalado **não precisa baixar**: ele se
+            atualiza sozinho ao ser aberto.
+          releaseDraft: false
+          prerelease: false
+          # Gera o latest.json que o updater consulta. Sem isto a auto-atualização
+          # não tem para onde olhar.
+          includeUpdaterJson: true

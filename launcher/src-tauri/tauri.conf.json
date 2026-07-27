@@ -23,6 +23,17 @@
       "csp": "default-src 'self'; connect-src 'self' http://localhost:3000 https://kam-api.melhorzin.com"
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/RaposoG/kam-brasil-api/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFDMjg5RTYyMkFCOTkzRTgKUldUb2s3a3FZcDRvckIyQmNkTDhWbzcrbkdjRGFWTWQyUTc4MHp6L2ZHZTFrY0JRN2UxY3owZUkK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "publisher": "Kam Brasil",
