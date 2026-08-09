@@ -1,5 +1,48 @@
 <script setup lang="ts">
-import { REPLAYS } from "../mock";
+import { computed, onMounted, ref } from "vue";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { gameStatus, listReplays } from "../api";
+
+// Tudo local: o Rust varre Saves/ e SavesMP/ da instalação. Nada vem da rede.
+const saves = ref<Awaited<ReturnType<typeof listReplays>>>([]);
+const instalado = ref(true);
+const pastaJogo = ref("");
+
+onMounted(async () => {
+  const st = await gameStatus();
+  instalado.value = st.installed;
+  pastaJogo.value = st.path;
+  if (st.installed) saves.value = await listReplays();
+});
+
+const quando = (ms: number) => {
+  const min = Math.floor((Date.now() - ms) / 60_000);
+  if (min < 1) return "agora";
+  if (min < 60) return `há ${min}min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `há ${h}h`;
+  const d = Math.floor(h / 24);
+  return d === 1 ? "ontem" : `há ${d} dias`;
+};
+
+const mb = (bytes: number) =>
+  (bytes / 1_048_576).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + " MB";
+
+const cartas = computed(() =>
+  saves.value.map((r) => ({
+    nome: r.name,
+    modo: r.mode,
+    quando: quando(r.modifiedMs),
+    tamanho: mb(r.sizeBytes),
+    temReplay: r.hasReplay,
+  })),
+);
+
+// Abre a pasta dos saves multiplayer no Explorer — a permissão do plugin-opener
+// já existe no capabilities do Tauri.
+async function abrirPasta() {
+  await revealItemInDir(pastaJogo.value + "\\SavesMP");
+}
 </script>
 
 <template>
@@ -7,23 +50,30 @@ import { REPLAYS } from "../mock";
     <div class="cabecalho-tela">
       <div>
         <h1 class="titulo-tela">Arquivo de replays</h1>
-        <p class="sub-tela">Guardados 90 dias · favoritos ficam para sempre</p>
+        <p class="sub-tela">os saves da sua instalação — com selo quando o replay existe</p>
       </div>
-      <button class="btn-contorno ativo">IMPORTAR ARQUIVO</button>
+      <button class="btn-contorno ativo" :disabled="!instalado" @click="abrirPasta">
+        ABRIR PASTA
+      </button>
     </div>
 
-    <div class="grade">
-      <div v-for="r in REPLAYS" :key="r.mapa" class="cartao">
-        <div class="capa">
-          <span class="capa-nota">[ preview do mapa ]</span>
-          <span class="veredito" :style="{ color: r.cor }">{{ r.resultado }}</span>
-        </div>
+    <p v-if="!instalado" class="vazio">
+      O jogo ainda não está instalado — instale pela tela principal e os saves aparecem aqui.
+    </p>
+    <p v-else-if="!cartas.length" class="vazio">
+      Nenhum save encontrado. Jogue uma partida e volte aqui.
+    </p>
+
+    <div v-else class="grade">
+      <div v-for="r in cartas" :key="r.modo + r.nome" class="cartao">
         <div class="corpo">
-          <div class="mapa">{{ r.mapa }}</div>
-          <div class="contra">{{ r.contra }}</div>
+          <div class="topo">
+            <div class="nome">{{ r.nome }}</div>
+            <span class="chip">{{ r.modo }}</span>
+          </div>
           <div class="meta">
-            <span>{{ r.meta }}</span>
-            <button class="baixar">BAIXAR</button>
+            <span>{{ r.quando }} · {{ r.tamanho }}</span>
+            <span v-if="r.temReplay" class="selo-replay">REPLAY</span>
           </div>
         </div>
       </div>
@@ -41,51 +91,41 @@ import { REPLAYS } from "../mock";
 .cartao {
   background: var(--painel);
   border: 1px solid var(--linha);
-  overflow: hidden;
 }
 .cartao:hover {
   border-color: var(--bronze);
 }
-.capa {
-  height: 104px;
-  background: repeating-linear-gradient(135deg, rgba(232, 220, 200, 0.05) 0 2px, transparent 2px 9px);
-  border-bottom: 1px solid var(--linha);
-  position: relative;
-}
-.capa-nota {
-  position: absolute;
-  bottom: 7px;
-  left: 10px;
-  font-family: var(--mono);
-  font-size: 8.5px;
-  letter-spacing: 0.08em;
-  color: rgba(232, 220, 200, 0.4);
-}
-.veredito {
-  position: absolute;
-  top: 8px;
-  right: 9px;
-  padding: 3px 7px;
-  background: rgba(20, 16, 13, 0.8);
-  font-family: var(--mono);
-  font-size: 9px;
-}
 .corpo {
   padding: 13px 15px;
 }
-.mapa {
+.topo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.nome {
+  min-width: 0;
   font-family: var(--display);
   font-size: 13.5px;
   color: var(--pergaminho);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.contra {
-  font-size: 12px;
-  color: var(--calado);
-  font-style: italic;
+.chip {
+  flex: none;
+  padding: 2px 7px;
+  border: 1px solid var(--bronze);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  color: var(--ouro);
 }
 .meta {
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
   margin-top: 11px;
   padding-top: 10px;
   border-top: 1px solid var(--linha-fraca);
@@ -94,13 +134,13 @@ import { REPLAYS } from "../mock";
   letter-spacing: 0.06em;
   color: var(--calado-3);
 }
-.baixar {
-  font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: 0.06em;
-  color: var(--ouro-medio);
+.selo-replay {
+  color: var(--verde);
 }
-.baixar:hover {
-  color: var(--ouro-claro);
+.vazio {
+  margin: 20px 0 0;
+  font-size: 12.5px;
+  color: var(--calado-2);
+  font-style: italic;
 }
 </style>

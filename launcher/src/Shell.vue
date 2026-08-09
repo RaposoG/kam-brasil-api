@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, provide, ref } from "vue";
-import type { Account } from "./api";
-import { PATENTE } from "./mock";
+import { computed, onMounted, onUnmounted, provide, ref } from "vue";
+import { type Account, presenceHeartbeat } from "./api";
 import { iniciar } from "./install";
 import Dock from "./Dock.vue";
 import Home from "./screens/Home.vue";
@@ -36,29 +35,38 @@ const tela = ref<Tela>("home");
 const dock = ref(true);
 const conteudo = ref<HTMLElement | null>(null);
 
+// Sem tags de contagem: eram números fictícios do mock, e badge mentindo é
+// pior que badge nenhuma. Voltam quando cada tela tiver número real a exibir.
 const GRUPOS: { titulo: string; itens: { id: Tela; label: string; tag: string }[] }[] = [
   {
     titulo: "JOGO",
     itens: [
       { id: "home", label: "JOGAR", tag: "" },
-      { id: "partidas", label: "PARTIDAS", tag: "184" },
-      { id: "replays", label: "REPLAYS", tag: "31" },
-      { id: "mapas", label: "MAPAS", tag: "62" },
+      { id: "partidas", label: "PARTIDAS", tag: "" },
+      { id: "replays", label: "REPLAYS", tag: "" },
+      { id: "mapas", label: "MAPAS", tag: "" },
     ],
   },
   {
     titulo: "PROGRESSO",
     itens: [
       { id: "perfil", label: "PERFIL", tag: "" },
-      { id: "ranking", label: "RANKING", tag: "#6" },
-      { id: "temporada", label: "TEMPORADA", tag: "III" },
-      { id: "conquistas", label: "CONQUISTAS", tag: "23" },
+      { id: "ranking", label: "RANKING", tag: "" },
+      { id: "temporada", label: "TEMPORADA", tag: "" },
+      { id: "conquistas", label: "CONQUISTAS", tag: "" },
     ],
   },
-  { titulo: "COMUNIDADE", itens: [{ id: "noticias", label: "NOTÍCIAS", tag: "2" }] },
+  { titulo: "COMUNIDADE", itens: [{ id: "noticias", label: "NOTÍCIAS", tag: "" }] },
 ];
 
 const inicial = computed(() => props.account.nickname.charAt(0).toUpperCase());
+
+const membroDesde = computed(() => {
+  const c = props.account.createdAt;
+  if (!c) return "";
+  const quando = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(new Date(c));
+  return `membro desde ${quando}`;
+});
 
 function ir(id: string) {
   tela.value = id as Tela;
@@ -67,7 +75,18 @@ function ir(id: string) {
   conteudo.value?.scrollTo({ top: 0 });
 }
 
-onMounted(iniciar);
+// Presença: a API considera online quem bateu nos últimos 2 min; batemos a
+// cada 60 s com folga. Falha é silenciosa — sem rede, você só aparece offline.
+let heartbeat = 0;
+
+onMounted(() => {
+  iniciar();
+  const bater = () => presenceHeartbeat().catch(() => {});
+  bater();
+  heartbeat = window.setInterval(bater, 60_000);
+});
+
+onUnmounted(() => clearInterval(heartbeat));
 </script>
 
 <template>
@@ -78,13 +97,10 @@ onMounted(iniciar);
           <div class="escudo brasao"><span>{{ inicial }}</span></div>
           <div class="quem">
             <div class="apelido">{{ account.nickname }}</div>
-            <div class="patente">{{ PATENTE.titulo }}</div>
+            <div class="patente">{{ membroDesde }}</div>
           </div>
         </div>
-        <div class="trilha"><i :style="{ width: PATENTE.pct + '%' }" /></div>
-        <div class="trilha-legenda">
-          <span>{{ PATENTE.temporada }}</span><span>{{ PATENTE.pct }}%</span>
-        </div>
+        <div class="prep-nota">divisões em preparação</div>
       </div>
 
       <div class="menu">
@@ -174,25 +190,12 @@ onMounted(iniciar);
   color: var(--calado);
   font-style: italic;
 }
-.trilha {
-  margin-top: 13px;
-  height: 4px;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid var(--linha);
-}
-.trilha i {
-  display: block;
-  height: 100%;
-  background: linear-gradient(180deg, var(--ouro-claro), var(--ouro-medio));
-}
-.trilha-legenda {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 5px;
+.prep-nota {
+  margin-top: 11px;
   font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: 0.05em;
-  color: var(--calado-2);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--calado-4);
 }
 
 .menu {

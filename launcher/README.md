@@ -46,7 +46,8 @@ src/
   Shell.vue       moldura: lateral, navegação e conteúdo
   Dock.vue        camaradas + taverna
   install.ts      estado real da instalação, compartilhado entre telas
-  mock.ts         ⚠️ dados fictícios das telas de progresso
+  api.ts          ponte com o Rust + leituras públicas da API (stats, news…)
+  EmBreve.vue     painel "em preparação" — o que falta e de onde virá
   screens/        as dez telas
 ```
 
@@ -61,20 +62,21 @@ bloqueada. Elas somam ~500 KB ao bundle, quase tudo `.woff2`.
 
 ### O que é real e o que ainda é ficção
 
-Ligado ao backend: login e conta, barra de status da instalação, botão principal
-(escolher original → instalar → preparar → jogar), versões e a tela de
-Configurações. Tudo passa por `install.ts`.
+O inventário completo — camada por camada, com o porquê técnico de cada limite —
+está em [`docs/FUNCIONALIDADES.md`](docs/FUNCIONALIDADES.md). O resumo:
 
-Ficção em `mock.ts`: perfil, ranking, partidas, replays, mapas, temporada,
-conquistas, notícias, camaradas e taverna. A API não tem esses dados — ela guarda
-contas, tickets, servidores e releases, e o `GET /maps.php` recebe a partida
-jogada **sem persistir**. Cada bloco do `mock.ts` foi escrito para virar uma
-chamada de API sem a tela mudar de forma.
+**Real:** login e conta, instalação e atualização (via `install.ts`), notícias,
+estatísticas do reino (online, servidores, partidas por dia, mapas mais
+jogados), feed de partidas da comunidade, camaradas e taverna (via comandos
+autenticados no Rust), replays e mapas locais da instalação, catálogo de
+temporada e de conquistas, MOTD. O `mock.ts` **não existe mais** — cada tela lê
+da API ou do disco.
 
-Onde o design pedia um controle sem backend, o rótulo mudou em vez de virar botão
-morto: "Pasta do jogo" abre a pasta em vez de trocá-la, o canal de atualização
-virou "verificar", e o filtro `FFA` das partidas virou `EQUIPES` — nenhuma partida
-do histórico é FFA. O campo da taverna fica visivelmente desabilitado.
+**Ainda não existe** (e está marcado na interface com o painel `EmBreve.vue`):
+tudo que depende de **resultado** de partida — vitórias, elo, divisões,
+leaderboard, relatório de batalha, progresso de temporada e de conquistas. O
+jogo só reporta o **início** das partidas ao master server; o fim é a Fase 1b,
+trabalho em Pascal no servidor dedicado.
 
 ## Por que o login mora aqui e não dentro do jogo
 

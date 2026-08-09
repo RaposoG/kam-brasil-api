@@ -1,15 +1,66 @@
 <script setup lang="ts">
-import { computed, inject } from "vue";
-import type { Account } from "../api";
-import { DIVISOES, JOGADOR, LEADERBOARD, MAPAS_TOP, PARTIDAS_DIA, PATENTE, STATS_GLOBAIS } from "../mock";
+import { computed, onMounted, ref } from "vue";
+import EmBreve from "../EmBreve.vue";
+import { fetchStats } from "../api";
 
-const account = inject<Account>("account");
+// Inferimos o tipo da própria função em vez de importar o nome do tipo:
+// menos um acoplamento para quebrar se o contrato ganhar campos novos.
+const stats = ref<Awaited<ReturnType<typeof fetchStats>> | null>(null);
 
-// A linha do jogador no quadro usa o apelido real da conta — o resto da tabela
-// é fictício, mas ver o nome de outra pessoa no próprio lugar seria estranho.
-const quadro = computed(() =>
-  LEADERBOARD.map((p) => (p.nome === JOGADOR ? { ...p, nome: account?.nickname ?? p.nome } : p)),
-);
+onMounted(async () => {
+  try {
+    stats.value = await fetchStats();
+  } catch {
+    // Sem rede o cabeçalho fica nos traços — a tela continua de pé.
+  }
+});
+
+// Milhar com espaço, não ponto: é como o design sempre exibiu números grandes.
+const num = (n: number) => n.toLocaleString("pt-BR").replace(/\./g, " ");
+
+const globais = computed(() => {
+  const s = stats.value;
+  return [
+    { valor: s ? num(s.onlinePlayers) : "—", label: "ONLINE AGORA" },
+    { valor: s ? num(s.matchesToday) : "—", label: "PARTIDAS HOJE" },
+    { valor: s ? num(s.openServers) : "—", label: "SERVIDORES" },
+    { valor: s ? num(s.accountsTotal) : "—", label: "CONTAS" },
+  ];
+});
+
+const mapasTop = computed(() => {
+  const top = stats.value?.topMaps ?? [];
+  const maior = Math.max(...top.map((m) => m.count), 1);
+  return top.map((m) => ({
+    nome: m.map,
+    qtd: num(m.count),
+    pct: Math.round((m.count / maior) * 100),
+  }));
+});
+
+const porDia = computed(() => {
+  const dias = stats.value?.matchesPerDay ?? [];
+  const maior = Math.max(...dias.map((d) => d.count), 1);
+  return dias.map((d) => ({ pct: Math.round((d.count / maior) * 100) }));
+});
+
+const MESES = "JAN FEV MAR ABR MAI JUN JUL AGO SET OUT NOV DEZ".split(" ");
+const diaCurto = (iso: string) => {
+  const [, m, d] = iso.split("-").map(Number);
+  return `${d} ${MESES[m - 1]}`;
+};
+
+const legendaInicio = computed(() => {
+  const primeiro = stats.value?.matchesPerDay[0];
+  return primeiro ? diaCurto(primeiro.day) : "";
+});
+
+const media = computed(() => {
+  const dias = stats.value?.matchesPerDay ?? [];
+  if (!dias.length) return "";
+  const total = dias.reduce((a, d) => a + d.count, 0);
+  return `média ${num(Math.round(total / dias.length))}/dia`;
+});
 </script>
 
 <template>
@@ -17,66 +68,47 @@ const quadro = computed(() =>
     <div class="cabecalho-tela">
       <div>
         <h1 class="titulo-tela">Ordem do Reino</h1>
-        <p class="sub-tela">Temporada III · encerra em 22 dias</p>
+        <p class="sub-tela">os números do reino, direto do master server</p>
       </div>
       <div class="globais">
-        <div v-for="g in STATS_GLOBAIS" :key="g.label" class="global">
+        <div v-for="g in globais" :key="g.label" class="global">
           <div class="global-valor">{{ g.valor }}</div>
           <div class="global-label">{{ g.label }}</div>
         </div>
       </div>
     </div>
 
-    <div class="painel divisoes">
-      <div class="divisoes-cabeca">
-        <span class="rotulo">AS OITO DIVISÕES · DISTRIBUIÇÃO DA COMUNIDADE</span>
-        <span class="voce-esta">você está em {{ PATENTE.titulo }}</span>
-      </div>
-      <div class="colunas">
-        <div v-for="d in DIVISOES" :key="d.n" class="divisao">
-          <span class="pct" :style="{ color: d.corTexto }">{{ d.pct }}%</span>
-          <div class="torre" :style="{ height: d.altura + 'px', background: d.fundo, borderColor: d.borda }" />
-          <div class="escudo brasao" :style="{ borderColor: d.borda }">
-            <span :style="{ color: d.corTexto }">{{ d.n }}</span>
-          </div>
-          <span class="divisao-nome" :style="{ color: d.corTexto }">{{ d.nome }}</span>
-          <span class="divisao-marca">{{ d.marca }}</span>
-        </div>
-      </div>
+    <div class="bloco">
+      <EmBreve
+        titulo="As oito divisões"
+        descricao="A distribuição da comunidade por divisão depende de o servidor dedicado reportar o resultado das partidas — hoje só o início chega ao master server. É a Fase 1b: quando o fim de jogo for reportado, cada vitória e derrota vira elo, e o elo vira divisão."
+      />
     </div>
 
     <div class="duas">
-      <div class="carta quadro">
-        <div class="quadro-cabeca">
-          <span class="quadro-titulo">Os mais ilustres</span>
-          <span class="quadro-nota">GLOBAL · 1V1</span>
-        </div>
-        <div v-for="p in quadro" :key="p.pos" class="linha" :style="{ background: p.fundo }">
-          <span class="pos">{{ p.pos }}</span>
-          <span class="jogador">{{ p.nome }}</span>
-          <span class="divisao-txt">{{ p.divisao }}</span>
-          <span class="registro">{{ p.registro }}</span>
-          <span class="forma" :style="{ color: p.corForma }">{{ p.forma }}</span>
-        </div>
-      </div>
+      <EmBreve
+        titulo="Os mais ilustres"
+        descricao="O quadro de honra precisa de histórico de vitórias por jogador, e nenhum resultado de partida chega à API ainda. Assim que o servidor reportar o fim das partidas (Fase 1b), o leaderboard nasce aqui — de verdade, sem nomes inventados."
+      />
 
       <div class="lado">
         <div class="painel">
           <div class="rotulo espaco">MAPAS MAIS JOGADOS</div>
-          <div v-for="m in MAPAS_TOP" :key="m.nome" class="mapa">
+          <div v-for="m in mapasTop" :key="m.nome" class="mapa">
             <span class="mapa-nome">{{ m.nome }}</span>
             <div class="fita"><i :style="{ width: m.pct + '%' }" /></div>
             <span class="mapa-qtd">{{ m.qtd }}</span>
           </div>
+          <p v-if="stats && !mapasTop.length" class="vazio">Nenhuma partida reportada ainda.</p>
         </div>
 
         <div class="painel cresce">
           <div class="rotulo espaco-curto">PARTIDAS POR DIA · 14 DIAS</div>
           <div class="dias">
-            <div v-for="(b, i) in PARTIDAS_DIA" :key="i" class="dia" :style="{ height: b.pct + '%' }" />
+            <div v-for="(b, i) in porDia" :key="i" class="dia" :style="{ height: b.pct + '%' }" />
           </div>
           <div class="dias-legenda">
-            <span>27 JUL</span><span>média 288/dia</span><span>HOJE</span>
+            <span>{{ legendaInicio }}</span><span>{{ media }}</span><span>HOJE</span>
           </div>
         </div>
       </div>
@@ -106,64 +138,8 @@ const quadro = computed(() =>
   color: var(--calado-3);
 }
 
-.divisoes {
-  padding: 22px 24px;
+.bloco {
   margin-top: 22px;
-}
-.divisoes-cabeca {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 18px;
-}
-.voce-esta {
-  font-size: 11.5px;
-  color: var(--calado-2);
-  font-style: italic;
-}
-.colunas {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-}
-.divisao {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 9px;
-}
-.pct {
-  font-family: var(--mono);
-  font-size: 9.5px;
-}
-.torre {
-  width: 100%;
-  border: 1px solid;
-}
-.brasao {
-  width: 30px;
-  height: 34px;
-  flex: none;
-}
-.brasao span {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.02em;
-}
-.divisao-nome {
-  font-family: var(--display);
-  font-size: 10.5px;
-  letter-spacing: 0.08em;
-  text-align: center;
-}
-.divisao-marca {
-  font-family: var(--mono);
-  font-size: 8px;
-  letter-spacing: 0.12em;
-  color: var(--ouro-claro);
-  margin-top: -4px;
-  min-height: 10px;
 }
 
 .duas {
@@ -172,65 +148,6 @@ const quadro = computed(() =>
   gap: 20px;
   margin-top: 20px;
   align-items: start;
-}
-
-.quadro {
-  padding: 20px 0 8px;
-}
-.quadro-cabeca {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  padding: 0 22px 14px;
-  border-bottom: 1px solid rgba(90, 72, 48, 0.35);
-}
-.quadro-titulo {
-  font-family: var(--display);
-  font-size: 15px;
-  letter-spacing: 0.08em;
-}
-.quadro-nota {
-  font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: 0.1em;
-  color: var(--carta-calado);
-}
-.linha {
-  display: grid;
-  grid-template-columns: 34px 1fr 96px 62px 54px;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 22px;
-  border-bottom: 1px solid rgba(90, 72, 48, 0.16);
-}
-.pos {
-  font-family: var(--display);
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--carta-calado);
-}
-.jogador {
-  font-family: var(--display);
-  font-size: 13.5px;
-  color: var(--carta-tinta);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.divisao-txt {
-  font-size: 12px;
-  font-style: italic;
-  color: var(--carta-tinta-3);
-}
-.registro {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--carta-tinta-3);
-}
-.forma {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  text-align: right;
 }
 
 .lado {
@@ -278,6 +195,12 @@ const quadro = computed(() =>
   font-family: var(--mono);
   font-size: 10px;
   color: var(--calado);
+}
+.vazio {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--calado-2);
+  font-style: italic;
 }
 
 .cresce {

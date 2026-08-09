@@ -20,12 +20,9 @@ roda é o Vue em [`../../src`](../../src).
 O design foi desenhado sabendo que boa parte dos dados ainda não existe (está
 escrito no próprio `github.md`: *"estatísticas e elo são feature nova"*).
 
-- **Ligado ao backend de verdade:** login e conta, barra de status da instalação,
-  botão principal (escolher original → instalar → preparar → jogar), versão do
-  launcher e do jogo, e a tela de Configurações.
-- **Ainda ficção, em [`../../src/mock.ts`](../../src/mock.ts):** perfil, ranking,
-  partidas, replays, mapas, temporada, conquistas, notícias, camaradas e taverna.
-
-A API hoje tem contas, tickets de partida, lista de servidores e releases.
-`GET /maps.php` recebe a partida jogada mas não persiste nada — enquanto isso não
-mudar, as telas de progresso leem do `mock.ts`.
+Os dados de exemplo que o design carrega viveram um tempo em um `mock.ts` no
+código — ele **não existe mais**. As telas hoje leem da API e do disco, e o que
+ainda não tem como existir (tudo que depende de resultado de partida) aparece
+marcado como "em preparação" na própria interface. O inventário do que é real,
+do que passou a ser real e do que espera a Fase 1b está em
+[`../FUNCIONALIDADES.md`](../FUNCIONALIDADES.md).

@@ -1,13 +1,27 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { MAPAS } from "../mock";
+import { computed, onMounted, ref } from "vue";
+import { listLocalMaps } from "../api";
 
-const filtro = ref("populares");
+// Mapas instalados na pasta do jogo (Maps/ e MapsMP/), lidos pelo Rust.
+// Contagem de jogadores exigiria parsear o .dat binário — fica de fora.
+const mapas = ref<Awaited<ReturnType<typeof listLocalMaps>>>([]);
+
+onMounted(async () => {
+  mapas.value = await listLocalMaps();
+});
+
+const filtro = ref<"todos" | "SP" | "MP">("todos");
 const FILTROS = [
-  { id: "populares", label: "POPULARES" },
-  { id: "novos", label: "NOVOS" },
-  { id: "favoritos", label: "SEUS FAVORITOS" },
-];
+  { id: "todos", label: "TODOS" },
+  { id: "SP", label: "SP" },
+  { id: "MP", label: "MP" },
+] as const;
+
+const lista = computed(() =>
+  mapas.value.filter((m) => filtro.value === "todos" || m.mode === filtro.value),
+);
+
+const data = (ms: number) => new Date(ms).toLocaleDateString("pt-BR");
 </script>
 
 <template>
@@ -15,7 +29,7 @@ const FILTROS = [
     <div class="cabecalho-tela">
       <div>
         <h1 class="titulo-tela">Cartografia</h1>
-        <p class="sub-tela">62 mapas instalados · 8 da comunidade brasileira</p>
+        <p class="sub-tela">{{ mapas.length }} mapas instalados na sua pasta do jogo</p>
       </div>
       <div class="filtros">
         <button
@@ -30,18 +44,17 @@ const FILTROS = [
       </div>
     </div>
 
-    <div class="grade">
-      <div v-for="m in MAPAS" :key="m.nome" class="cartao">
-        <div class="capa">
-          <span class="jogadores">{{ m.jogadores }}</span>
-          <span class="capa-nota">[ minimapa ]</span>
+    <p v-if="!lista.length" class="vazio">
+      Nenhum mapa encontrado — instale o jogo pela tela principal e eles aparecem aqui.
+    </p>
+
+    <div v-else class="grade">
+      <div v-for="m in lista" :key="m.mode + m.name" class="cartao">
+        <div class="topo">
+          <div class="nome">{{ m.name }}</div>
+          <span class="chip">{{ m.mode }}</span>
         </div>
-        <div class="corpo">
-          <div class="nome">{{ m.nome }}</div>
-          <div class="meta">
-            <span>{{ m.partidas }}</span><span class="winrate">{{ m.winrate }}</span>
-          </div>
-        </div>
+        <div class="meta">{{ data(m.modifiedMs) }}</div>
       </div>
     </div>
   </div>
@@ -62,39 +75,19 @@ const FILTROS = [
 .cartao {
   background: var(--painel);
   border: 1px solid var(--linha);
+  padding: 12px 14px;
 }
 .cartao:hover {
   border-color: var(--bronze);
 }
-.capa {
-  aspect-ratio: 1.35;
-  background: repeating-linear-gradient(45deg, rgba(232, 220, 200, 0.05) 0 2px, transparent 2px 9px);
-  border-bottom: 1px solid var(--linha);
-  position: relative;
-}
-.capa-nota {
-  position: absolute;
-  bottom: 7px;
-  left: 9px;
-  font-family: var(--mono);
-  font-size: 8px;
-  letter-spacing: 0.06em;
-  color: rgba(232, 220, 200, 0.35);
-}
-.jogadores {
-  position: absolute;
-  top: 7px;
-  left: 9px;
-  padding: 2px 6px;
-  background: rgba(20, 16, 13, 0.75);
-  font-family: var(--mono);
-  font-size: 8.5px;
-  color: var(--ouro);
-}
-.corpo {
-  padding: 12px 14px;
+.topo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
 }
 .nome {
+  min-width: 0;
   font-family: var(--display);
   font-size: 13px;
   color: var(--pergaminho);
@@ -102,15 +95,25 @@ const FILTROS = [
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.chip {
+  flex: none;
+  padding: 2px 7px;
+  border: 1px solid var(--bronze);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  color: var(--ouro);
+}
 .meta {
-  display: flex;
-  justify-content: space-between;
   margin-top: 7px;
   font-family: var(--mono);
   font-size: 9px;
   color: var(--calado-3);
 }
-.winrate {
-  color: var(--calado);
+.vazio {
+  margin: 20px 0 0;
+  font-size: 12.5px;
+  color: var(--calado-2);
+  font-style: italic;
 }
 </style>

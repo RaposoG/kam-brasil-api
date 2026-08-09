@@ -2,7 +2,9 @@ mod assets;
 mod auth;
 mod game;
 mod install;
+mod local;
 mod original;
+mod social;
 
 use auth::AppState;
 
@@ -27,6 +29,14 @@ pub fn run() {
             original::check_original_game,
             assets::assets_status,
             assets::generate_assets,
+            social::friends_list,
+            social::friend_add,
+            social::friend_respond,
+            social::chat_fetch,
+            social::chat_send,
+            social::presence_heartbeat,
+            local::list_replays,
+            local::list_local_maps,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

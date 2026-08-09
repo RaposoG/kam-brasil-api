@@ -20,6 +20,10 @@ export class Account {
   @Column({ type: 'timestamptz', nullable: true })
   lastLoginAt!: Date | null
 
+  /** Batida do launcher (POST /presence, a cada 60 s). Online = visto há menos de 2 min. */
+  @Column({ type: 'timestamptz', nullable: true })
+  lastSeenAt!: Date | null
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date
 

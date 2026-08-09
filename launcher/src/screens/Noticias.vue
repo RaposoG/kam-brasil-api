@@ -1,5 +1,41 @@
 <script setup lang="ts">
-import { MOTD, NOTICIAS, NUMEROS_REINO } from "../mock";
+import { computed, onMounted, ref } from "vue";
+import { type NewsPost, type StatsOverview, fetchMotd, fetchNews, fetchStats } from "../api";
+
+const posts = ref<NewsPost[]>([]);
+const motd = ref("");
+const stats = ref<StatsOverview | null>(null);
+const carregando = ref(true);
+const erroPosts = ref("");
+
+onMounted(async () => {
+  // MOTD e números falham em silêncio (têm fallback visual); a coluna de
+  // posts é o assunto da tela, então lá o erro aparece por extenso.
+  fetchMotd().then((t) => (motd.value = t)).catch(() => {});
+  fetchStats().then((s) => (stats.value = s)).catch(() => {});
+  try {
+    posts.value = await fetchNews(20);
+  } catch {
+    erroPosts.value = "não foi possível alcançar o arauto — a API está fora do ar ou você está sem rede.";
+  } finally {
+    carregando.value = false;
+  }
+});
+
+const dataLonga = (iso: string) =>
+  new Intl.DateTimeFormat("pt-BR", { day: "numeric", month: "long" }).format(new Date(iso));
+
+const numeros = computed(() => {
+  const s = stats.value;
+  if (!s) return [];
+  const n = (x: number) => x.toLocaleString("pt-BR");
+  return [
+    { label: "Contas registradas", valor: n(s.accountsTotal) },
+    { label: "Partidas hoje", valor: n(s.matchesToday) },
+    { label: "No launcher agora", valor: n(s.launcherOnline) },
+    { label: "Servidores no ar", valor: n(s.openServers) },
+  ];
+});
 </script>
 
 <template>
@@ -13,27 +49,33 @@ import { MOTD, NOTICIAS, NUMEROS_REINO } from "../mock";
 
     <div class="duas">
       <div class="coluna">
-        <article v-for="n in NOTICIAS" :key="n.titulo" class="carta nota">
+        <p v-if="carregando" class="estado-lista">consultando o arauto…</p>
+        <p v-else-if="erroPosts" class="estado-lista erro">{{ erroPosts }}</p>
+        <p v-else-if="!posts.length" class="estado-lista">
+          nenhuma proclamação publicada ainda — o mural estreia com a primeira notícia.
+        </p>
+        <article v-for="n in posts" :key="n.id" class="carta nota">
           <div class="nota-cabeca">
             <span class="tag">{{ n.tag }}</span>
-            <span class="data">{{ n.data }}</span>
+            <span class="data">{{ dataLonga(n.publishedAt) }}</span>
           </div>
-          <h2 class="nota-titulo">{{ n.titulo }}</h2>
-          <p class="nota-corpo">{{ n.corpo }}</p>
+          <h2 class="nota-titulo">{{ n.title }}</h2>
+          <p class="nota-corpo">{{ n.body }}</p>
         </article>
       </div>
 
       <div class="coluna">
         <div class="painel compacto">
           <div class="rotulo espaco">O REINO EM NÚMEROS</div>
-          <div v-for="x in NUMEROS_REINO" :key="x.label" class="numero">
+          <p v-if="!numeros.length" class="estado-mini">contando as bandeiras…</p>
+          <div v-for="x in numeros" :key="x.label" class="numero">
             <span>{{ x.label }}</span><span class="numero-valor">{{ x.valor }}</span>
           </div>
         </div>
 
         <div class="painel compacto">
           <div class="rotulo espaco-curto">MOTD DO SERVIDOR</div>
-          <p class="motd">{{ MOTD }}</p>
+          <p class="motd">{{ motd || "o servidor não deixou recado hoje." }}</p>
         </div>
       </div>
     </div>
@@ -126,5 +168,18 @@ import { MOTD, NOTICIAS, NUMEROS_REINO } from "../mock";
   color: var(--pergaminho);
   font-style: italic;
   text-wrap: pretty;
+}
+.estado-lista {
+  margin: 0;
+  padding: 18px 2px;
+  font-size: 13px;
+  font-style: italic;
+  color: var(--calado-2);
+}
+.estado-mini {
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--calado-2);
 }
 </style>

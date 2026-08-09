@@ -28,6 +28,10 @@ pub struct Account {
     pub id: String,
     pub email: String,
     pub nickname: String,
+    /// O "na comunidade desde" do Perfil. `default` porque a API pode responder
+    /// sem o campo (versões antigas) e isso não pode derrubar o login.
+    #[serde(rename = "createdAt", default)]
+    pub created_at: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -45,6 +49,42 @@ struct AccountEnvelope {
 #[derive(Deserialize)]
 struct ApiError {
     error: String,
+}
+
+/// Um camarada aceito, com a presença que a API calculou (visto há < 2 min).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Friend {
+    pub friendship_id: String,
+    pub account_id: String,
+    pub nickname: String,
+    pub online: bool,
+    pub last_seen_at: Option<String>,
+}
+
+/// Convite pendente — só o necessário para aceitar/recusar/cancelar.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FriendRequest {
+    pub friendship_id: String,
+    pub nickname: String,
+}
+
+/// `GET /friends`: aceitos + pendentes nas duas direções, numa resposta só.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FriendsOverview {
+    pub friends: Vec<Friend>,
+    pub incoming: Vec<FriendRequest>,
+    pub outgoing: Vec<FriendRequest>,
+}
+
+/// Mensagem da taverna. `id` é o cursor do poll (`GET /chat?after=`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub id: i64,
+    pub nickname: String,
+    pub body: String,
+    pub at: String,
 }
 
 /// Sessão recém-criada: o token e a conta a que ele pertence.
@@ -191,6 +231,160 @@ impl ApiClient {
             .map_err(|e| format!("não foi possível falar com o servidor: {e}"))?;
         Ok(())
     }
+
+    pub async fn friends_list(&self, token: &str) -> Result<FriendsOverview, String> {
+        let response = self
+            .client
+            .get(self.url("/friends"))
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| format!("não foi possível falar com o servidor: {e}"))?;
+
+        if !response.status().is_success() {
+            return Err(Self::error_message(response).await);
+        }
+
+        response
+            .json::<FriendsOverview>()
+            .await
+            .map_err(|e| format!("resposta inesperada do servidor: {e}"))
+    }
+
+    /// Devolve o `status` da API: `pending` (convite enviado) ou `accepted`
+    /// (existia convite reverso e virou amizade) — a UI trata diferente.
+    pub async fn friend_add(&self, token: &str, nickname: &str) -> Result<String, String> {
+        #[derive(Deserialize)]
+        struct StatusResponse {
+            status: String,
+        }
+
+        let response = self
+            .client
+            .post(self.url("/friends"))
+            .bearer_auth(token)
+            .json(&serde_json::json!({ "nickname": nickname }))
+            .send()
+            .await
+            .map_err(|e| format!("não foi possível falar com o servidor: {e}"))?;
+
+        if !response.status().is_success() {
+            return Err(Self::error_message(response).await);
+        }
+
+        response
+            .json::<StatusResponse>()
+            .await
+            .map(|r| r.status)
+            .map_err(|e| format!("resposta inesperada do servidor: {e}"))
+    }
+
+    pub async fn friend_accept(&self, token: &str, friendship_id: &str) -> Result<(), String> {
+        let response = self
+            .client
+            .post(self.url(&format!("/friends/{friendship_id}/accept")))
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| format!("não foi possível falar com o servidor: {e}"))?;
+
+        if !response.status().is_success() {
+            return Err(Self::error_message(response).await);
+        }
+        Ok(())
+    }
+
+    /// Recusa, cancela ou desfaz — a API aceita qualquer lado da amizade.
+    pub async fn friend_remove(&self, token: &str, friendship_id: &str) -> Result<(), String> {
+        let response = self
+            .client
+            .delete(self.url(&format!("/friends/{friendship_id}")))
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| format!("não foi possível falar com o servidor: {e}"))?;
+
+        if !response.status().is_success() {
+            return Err(Self::error_message(response).await);
+        }
+        Ok(())
+    }
+
+    /// `after` é o id da última mensagem que já temos; sem ele vêm as últimas 50.
+    pub async fn chat_fetch(&self, token: &str, after: Option<i64>) -> Result<Vec<ChatMessage>, String> {
+        #[derive(Deserialize)]
+        struct ChatEnvelope {
+            messages: Vec<ChatMessage>,
+        }
+
+        // URL montada à mão: o `.query()` do reqwest fica atrás de uma feature
+        // que não usamos, e um i64 não precisa de percent-encoding.
+        let url = match after {
+            Some(after) => self.url(&format!("/chat?after={after}")),
+            None => self.url("/chat"),
+        };
+
+        let response = self
+            .client
+            .get(url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| format!("não foi possível falar com o servidor: {e}"))?;
+
+        if !response.status().is_success() {
+            return Err(Self::error_message(response).await);
+        }
+
+        response
+            .json::<ChatEnvelope>()
+            .await
+            .map(|r| r.messages)
+            .map_err(|e| format!("resposta inesperada do servidor: {e}"))
+    }
+
+    pub async fn chat_send(&self, token: &str, body: &str) -> Result<ChatMessage, String> {
+        #[derive(Deserialize)]
+        struct MessageEnvelope {
+            message: ChatMessage,
+        }
+
+        let response = self
+            .client
+            .post(self.url("/chat"))
+            .bearer_auth(token)
+            .json(&serde_json::json!({ "body": body }))
+            .send()
+            .await
+            .map_err(|e| format!("não foi possível falar com o servidor: {e}"))?;
+
+        if !response.status().is_success() {
+            return Err(Self::error_message(response).await);
+        }
+
+        response
+            .json::<MessageEnvelope>()
+            .await
+            .map(|r| r.message)
+            .map_err(|e| format!("resposta inesperada do servidor: {e}"))
+    }
+
+    /// Marca a conta como "launcher aberto" — é isto que alimenta o online dos
+    /// camaradas e o `launcherOnline` do overview.
+    pub async fn presence_heartbeat(&self, token: &str) -> Result<(), String> {
+        let response = self
+            .client
+            .post(self.url("/presence"))
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| format!("não foi possível falar com o servidor: {e}"))?;
+
+        if !response.status().is_success() {
+            return Err(Self::error_message(response).await);
+        }
+        Ok(())
+    }
 }
 
 pub struct AppState {
@@ -233,6 +427,12 @@ impl AppState {
 
     pub fn api_base(&self) -> String {
         self.api.base().to_string()
+    }
+
+    /// Visível ao módulo `social`: os comandos de lá usam o mesmo cliente para
+    /// não abrir um pool de conexões novo por chamada.
+    pub(crate) fn api(&self) -> &ApiClient {
+        &self.api
     }
 
     /// Ticket de partida para entregar ao jogo. Visível ao módulo `game`.

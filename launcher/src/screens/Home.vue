@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, ref } from "vue";
 import {
   acaoPrincipal,
   atualizandoLauncher,
@@ -13,7 +13,15 @@ import {
   status,
   versaoInstalada,
 } from "../install";
-import { NOTICIAS_CURTAS, ONLINE, PARTIDAS, montarRelatorio } from "../mock";
+import {
+  type NewsPost,
+  type ReplaySave,
+  type StatsOverview,
+  fetchNews,
+  fetchStats,
+  listReplays,
+  tempoRelativo,
+} from "../api";
 
 const emit = defineEmits<{ ir: [tela: string] }>();
 
@@ -24,14 +32,29 @@ const revisao = computed(() => {
   return rev ? `v${v} · ${rev}` : `v${v}`;
 });
 
-// Números da última partida derivados do mesmo relatório que a tela de
-// Partidas mostra — cravar valores diferentes aqui faria a Home mentir.
-const ultima = PARTIDAS[0];
-const rel = montarRelatorio(ultima.id);
-const resumo = ["recursos", "casas", "perdas", "apm"].map((id) => {
-  const m = rel.comparativo.find((c) => c.id === id)!;
-  return { valor: m.voce, label: m.rotulo === "PERDAS" ? "MORTES" : m.rotulo };
+const stats = ref<StatsOverview | null>(null);
+const noticias = ref<NewsPost[]>([]);
+// A "última partida" honesta que temos: o save multiplayer mais recente do
+// disco. Resultado/números não existem sem o jogo reportar fim de partida.
+const ultima = ref<ReplaySave | null>(null);
+
+onMounted(() => {
+  // Três buscas independentes e sem await: uma falhar não apaga as outras, e a
+  // Home é utilizável mesmo com a API fora do ar (o herói é local).
+  fetchStats().then((s) => (stats.value = s)).catch(() => {});
+  fetchNews(3).then((n) => (noticias.value = n)).catch(() => {});
+  listReplays()
+    .then((r) => (ultima.value = r.find((s) => s.mode === "MP") ?? null))
+    .catch(() => {});
 });
+
+/** "08 AGO" a partir do publishedAt. */
+function dataCurta(iso: string) {
+  const partes = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" }).formatToParts(new Date(iso));
+  const dia = partes.find((p) => p.type === "day")?.value ?? "";
+  const mes = (partes.find((p) => p.type === "month")?.value ?? "").replace(".", "");
+  return `${dia} ${mes.toUpperCase()}`;
+}
 </script>
 
 <template>
@@ -72,12 +95,12 @@ const resumo = ["recursos", "casas", "perdas", "apm"].map((id) => {
         <div class="online">
           <div class="rotulo">ONLINE AGORA</div>
           <div class="online-num">
-            <span class="numero">{{ ONLINE.jogadores }}</span>
+            <span class="numero">{{ stats?.onlinePlayers ?? "—" }}</span>
             <span class="unidade">jogadores</span>
           </div>
           <div class="risco" />
-          <div class="online-linha"><span>Partidas abertas</span><span>{{ ONLINE.abertas }}</span></div>
-          <div class="online-linha"><span>Em disputa</span><span>{{ ONLINE.disputa }}</span></div>
+          <div class="online-linha"><span>Servidores abertos</span><span>{{ stats?.openServers ?? "—" }}</span></div>
+          <div class="online-linha"><span>No launcher</span><span>{{ stats?.launcherOnline ?? "—" }}</span></div>
         </div>
       </div>
     </div>
@@ -96,23 +119,21 @@ const resumo = ["recursos", "casas", "perdas", "apm"].map((id) => {
       <div class="carta ultima">
         <div class="canto" />
         <div class="rotulo carta-rotulo">ÚLTIMA PARTIDA</div>
-        <div class="ultima-cabeca">
-          <span class="veredito" :style="{ color: rel.partidaCor }">
-            {{ ultima.venceu ? "VITÓRIA" : "DERROTA" }}
-          </span>
-          <span class="quando">{{ ultima.quando }}</span>
-        </div>
-        <div class="ultima-sub">{{ ultima.mapa }} · {{ ultima.modo }} · {{ ultima.dur }}</div>
-
-        <div class="numeros">
-          <div v-for="r in resumo" :key="r.label">
-            <div class="numero-valor">{{ r.valor }}</div>
-            <div class="numero-label">{{ r.label }}</div>
+        <template v-if="ultima">
+          <div class="ultima-cabeca">
+            <span class="veredito nome-save">{{ ultima.name }}</span>
+            <span class="quando">{{ tempoRelativo(ultima.modifiedMs) }}</span>
           </div>
-        </div>
+          <div class="ultima-sub">
+            save multiplayer{{ ultima.hasReplay ? " · replay disponível" : "" }}
+          </div>
+        </template>
+        <p v-else class="ultima-vazia">
+          nenhuma batalha registrada ainda — o save multiplayer mais recente aparece aqui.
+        </p>
 
-        <button class="btn-carta relatorio" @click="emit('ir', 'partidas')">
-          VER RELATÓRIO COMPLETO
+        <button class="btn-carta relatorio" @click="emit('ir', 'replays')">
+          VER REPLAYS
         </button>
       </div>
 
@@ -121,11 +142,12 @@ const resumo = ["recursos", "casas", "perdas", "apm"].map((id) => {
           <span class="rotulo">NOTÍCIAS DO REINO</span>
           <button class="todas" @click="emit('ir', 'noticias')">TODAS →</button>
         </div>
-        <div v-for="n in NOTICIAS_CURTAS" :key="n.titulo" class="noticia">
-          <div class="noticia-data">{{ n.data }}</div>
+        <div v-if="!noticias.length" class="noticia-vazia">nenhuma proclamação por enquanto.</div>
+        <div v-for="n in noticias" :key="n.id" class="noticia">
+          <div class="noticia-data">{{ dataCurta(n.publishedAt) }}</div>
           <div class="noticia-corpo">
-            <div class="noticia-titulo">{{ n.titulo }}</div>
-            <div class="noticia-resumo">{{ n.resumo }}</div>
+            <div class="noticia-titulo">{{ n.title }}</div>
+            <div class="noticia-resumo">{{ n.body }}</div>
           </div>
         </div>
       </div>
@@ -355,24 +377,19 @@ const resumo = ["recursos", "casas", "perdas", "apm"].map((id) => {
   font-style: italic;
   margin-top: 2px;
 }
-.numeros {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px solid rgba(90, 72, 48, 0.3);
+.nome-save {
+  color: var(--carta-tinta);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
-.numero-valor {
-  font-family: var(--display);
-  font-size: 18px;
-  font-weight: 600;
-}
-.numero-label {
-  font-family: var(--mono);
-  font-size: 8.5px;
-  letter-spacing: 0.1em;
+.ultima-vazia {
+  margin: 12px 0 0;
+  font-size: 13px;
+  font-style: italic;
   color: var(--carta-calado);
+  text-wrap: pretty;
 }
 .relatorio {
   margin-top: 16px;
@@ -423,5 +440,16 @@ const resumo = ["recursos", "casas", "perdas", "apm"].map((id) => {
   color: var(--calado);
   line-height: 1.45;
   text-wrap: pretty;
+  /* O corpo completo mora na tela de Notícias; aqui é vitrine. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.noticia-vazia {
+  padding: 13px 0 4px;
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--calado-2);
 }
 </style>

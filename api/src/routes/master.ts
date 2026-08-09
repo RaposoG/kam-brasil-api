@@ -1,8 +1,10 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { LessThanOrEqual, MoreThan } from 'typeorm'
 import { config } from '../config.ts'
-import { gameServers } from '../data-source.ts'
+import { gameServers, matchReports } from '../data-source.ts'
 import { peerIp } from '../peer-ip.ts'
+import { clampPlayerCount, sanitizeMapName } from '../sanitize.ts'
+import { RateLimiter } from '../throttle.ts'
 
 /**
  * Compatibilidade com o master server original (os PHPs em Utils/MasterServer/).
@@ -16,6 +18,13 @@ import { peerIp } from '../peer-ip.ts'
 
 /** O TTL vem do cliente; limitamos para ninguém fixar um servidor fantasma na lista. */
 const MAX_TTL_SECONDS = 3600
+
+/**
+ * maps.php é público e sem credencial — qualquer um na internet gravaria
+ * estatística falsa à vontade. 1 report a cada 10 s por IP segura o grosso.
+ * Em memória e instância única (ver throttle.ts).
+ */
+const mapReportLimiter = new RateLimiter(10_000)
 
 /**
  * O parser do cliente (TKMServerList.AddFromText) faz split por vírgula e
@@ -133,15 +142,44 @@ export default async function masterRoutes(app: FastifyInstance) {
   })
 
   /**
-   * O cliente avisa qual mapa foi jogado. Ainda não guardamos — vira estatística
-   * quando desenharmos essa parte. Respondemos ok para o cliente não logar erro.
+   * O cliente avisa que uma partida COMEÇOU (é só isso que ele reporta — sem
+   * resultado nem duração). Gravamos em match_reports para as estatísticas.
+   *
+   * A resposta é SEMPRE `success` 200: o cliente Pascal ignora o corpo e não
+   * tem como exibir erro — falhar aqui só sujaria o log do jogador.
    */
   app.get('/maps.php', async (request, reply) => {
     reply.type('text/plain')
-    request.log.info(
-      { map: str(request, 'map'), crc: str(request, 'mapcrc'), players: int(request, 'playercount') },
-      'partida reportada',
-    )
+
+    try {
+      // Nome vazio depois da sanitização = report sem conteúdo, não grava.
+      // A checagem vem antes do rate-limit para lixo não queimar a janela.
+      const map = sanitizeMapName(str(request, 'map'))
+      const mapCrc = str(request, 'mapcrc').slice(0, 32)
+
+      // A chave do rate-limit inclui o mapa: quem reporta é o CLIENTE host, e
+      // dois jogadores atrás do mesmo IP público (CGNAT é o normal nos
+      // provedores brasileiros) hospedando partidas quase juntos são tráfego
+      // legítimo — só IP puniria o segundo. O que queremos barrar é script
+      // martelando o mesmo report, e esse repete mapa e crc.
+      const chave = `${peerIp(request)}|${map}|${mapCrc}`
+      if (map && mapReportLimiter.allow(chave)) {
+        await matchReports().insert({
+          map,
+          mapCrc,
+          playerCount: clampPlayerCount(int(request, 'playercount')),
+          netRevision: str(request, 'rev').slice(0, 16),
+          gameRevision: str(request, 'coderev').slice(0, 32),
+        })
+      } else if (map) {
+        // Descarte silencioso para o cliente, mas nunca para nós: subcontagem
+        // sem rastro em matchesPerDay seria indepurável.
+        request.log.info({ map, ip: peerIp(request) }, 'report de partida descartado pelo rate-limit')
+      }
+    } catch (error) {
+      request.log.error({ error }, 'falha ao gravar report de partida')
+    }
+
     return reply.send('success')
   })
 

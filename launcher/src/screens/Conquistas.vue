@@ -1,5 +1,18 @@
 <script setup lang="ts">
-import { CONQUISTAS } from "../mock";
+import { onMounted, ref } from "vue";
+import { fetchAchievements } from "../api";
+
+// Catálogo real vindo da API; o progresso não existe ainda — depende de
+// estatística por jogador, que só nasce quando o servidor reportar resultados.
+const conquistas = ref<Awaited<ReturnType<typeof fetchAchievements>>>([]);
+
+onMounted(async () => {
+  try {
+    conquistas.value = await fetchAchievements();
+  } catch {
+    // Sem rede a grade fica vazia; a nota do cabeçalho já situa o jogador.
+  }
+});
 </script>
 
 <template>
@@ -7,22 +20,20 @@ import { CONQUISTAS } from "../mock";
     <div class="cabecalho-tela">
       <div>
         <h1 class="titulo-tela">Feitos e honrarias</h1>
-        <p class="sub-tela">23 de 60 conquistadas</p>
+        <p class="sub-tela">0 de {{ conquistas.length }} conquistadas</p>
       </div>
-      <span class="percentual">38%</span>
+      <span class="nota">o progresso chega com a Fase 1b, quando o servidor reportar resultados</span>
     </div>
 
     <div class="grade">
-      <div v-for="c in CONQUISTAS" :key="c.sigla" class="conquista">
-        <div class="escudo medalha" :style="{ background: c.fundo, borderColor: c.borda }">
-          <span :style="{ color: c.cor }">{{ c.sigla }}</span>
-        </div>
+      <div v-for="c in conquistas" :key="c.id" class="conquista">
+        <div class="escudo medalha"><span>{{ c.sigla }}</span></div>
         <div class="corpo">
-          <div class="nome" :style="{ color: c.cor }">{{ c.nome }}</div>
+          <div class="nome">{{ c.nome }}</div>
           <div class="desc">{{ c.desc }}</div>
           <div class="progresso">
-            <div class="fita"><i :style="{ width: c.pct + '%' }" /></div>
-            <span class="contagem">{{ c.progresso }}</span>
+            <div class="fita"><i style="width: 0" /></div>
+            <span class="contagem">—</span>
           </div>
         </div>
       </div>
@@ -31,11 +42,13 @@ import { CONQUISTAS } from "../mock";
 </template>
 
 <style scoped>
-.percentual {
-  font-family: var(--display);
-  font-size: 20px;
-  color: var(--ouro);
+.nota {
   flex: none;
+  max-width: 300px;
+  text-align: right;
+  font-size: 11.5px;
+  color: var(--calado-2);
+  font-style: italic;
 }
 .grade {
   display: grid;
@@ -57,12 +70,12 @@ import { CONQUISTAS } from "../mock";
   width: 38px;
   height: 43px;
   flex: none;
-  border: 1px solid;
 }
 .medalha span {
   font-family: var(--display);
   font-size: 13px;
   font-weight: 700;
+  color: var(--calado);
 }
 .corpo {
   min-width: 0;
@@ -72,6 +85,7 @@ import { CONQUISTAS } from "../mock";
   font-family: var(--display);
   font-size: 13.5px;
   letter-spacing: 0.04em;
+  color: var(--pergaminho);
 }
 .desc {
   font-size: 12px;
