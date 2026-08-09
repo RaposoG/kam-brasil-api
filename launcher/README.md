@@ -31,6 +31,51 @@ Rust, MSVC Build Tools e WebView2 — todos já presentes nesta máquina
 Rust leva alguns minutos porque compila as dependências do Tauri do zero; as
 seguintes são incrementais.
 
+## A interface
+
+Veio do design em [`docs/design/`](docs/design) — dez telas, dock de camaradas e
+taverna. O arquivo de origem está guardado ali porque o projeto do claude.ai/design
+foi apagado.
+
+```
+src/
+  theme.css       paleta e primitivas (painel, carta, barra, escudo, botões)
+  App.vue         portão: restaura sessão → Login ou Shell
+  TitleBar.vue    barra própria (a janela é `decorations: false`)
+  Login.vue       entrar / criar conta
+  Shell.vue       moldura: lateral, navegação e conteúdo
+  Dock.vue        camaradas + taverna
+  install.ts      estado real da instalação, compartilhado entre telas
+  mock.ts         ⚠️ dados fictícios das telas de progresso
+  screens/        as dez telas
+```
+
+**A janela mudou** de 900×620 fixa para 1280×800 redimensionável, mínimo
+1024×680: o design não cabia no tamanho antigo. Sem decoração do sistema — quem
+minimiza, maximiza e fecha é o `TitleBar.vue`, e por isso ele aparece também na
+tela de login.
+
+**As fontes (Cinzel e Spectral) são empacotadas**, via `@fontsource`. Não dá para
+puxar do Google Fonts: a CSP é `default-src 'self'` e a requisição seria
+bloqueada. Elas somam ~500 KB ao bundle, quase tudo `.woff2`.
+
+### O que é real e o que ainda é ficção
+
+Ligado ao backend: login e conta, barra de status da instalação, botão principal
+(escolher original → instalar → preparar → jogar), versões e a tela de
+Configurações. Tudo passa por `install.ts`.
+
+Ficção em `mock.ts`: perfil, ranking, partidas, replays, mapas, temporada,
+conquistas, notícias, camaradas e taverna. A API não tem esses dados — ela guarda
+contas, tickets, servidores e releases, e o `GET /maps.php` recebe a partida
+jogada **sem persistir**. Cada bloco do `mock.ts` foi escrito para virar uma
+chamada de API sem a tela mudar de forma.
+
+Onde o design pedia um controle sem backend, o rótulo mudou em vez de virar botão
+morto: "Pasta do jogo" abre a pasta em vez de trocá-la, o canal de atualização
+virou "verificar", e o filtro `FFA` das partidas virou `EQUIPES` — nenhuma partida
+do histórico é FFA. O campo da taverna fica visivelmente desabilitado.
+
 ## Por que o login mora aqui e não dentro do jogo
 
 Três motivos práticos:

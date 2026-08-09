@@ -13,9 +13,12 @@
     "windows": [
       {
         "title": "Kam Brasil",
-        "width": 900,
-        "height": 620,
-        "resizable": false,
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1024,
+        "minHeight": 680,
+        "resizable": true,
+        "decorations": false,
         "center": true
       }
     ],

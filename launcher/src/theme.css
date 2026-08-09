@@ -1,0 +1,327 @@
+/* Paleta e primitivas do launcher.
+ *
+ * Vive fora dos SFCs porque as mesmas superfícies (painel escuro, carta de
+ * pergaminho, barra de progresso, rótulo de seção) se repetem em todas as dez
+ * telas — duplicar em cada `<style scoped>` já tinha feito o Play ficar com a
+ * paleta antiga depois de uma troca de cor. */
+
+:root {
+  /* superfícies, do mais fundo ao mais próximo */
+  --fundo: #0d0a08;
+  --app: #14100d;
+  --barra: #1a1410;
+  --lateral: #181310;
+  --painel: #1e1813;
+  --heroi: #1b1511;
+  --madeira: #241d17;
+
+  /* traços */
+  --linha: #3a2d20;
+  --linha-fraca: #2a211a;
+  --linha-tenue: #221b15;
+  --bronze: #6b5330;
+
+  /* dourados */
+  --ouro: #d4a24a;
+  --ouro-claro: #eec476;
+  --ouro-medio: #a87f38;
+  --ouro-fundo: #8f6a2e;
+
+  /* texto sobre escuro */
+  --pergaminho: #e8dcc8;
+  --tenue: #c3b299;
+  --calado: #a3927a;
+  --calado-2: #7d6b53;
+  --calado-3: #6b5a44;
+  --calado-4: #5c4c38;
+
+  /* carta de pergaminho (superfície clara) */
+  --carta: #e6d9bd;
+  --carta-borda: #8f7a52;
+  --carta-tinta: #2a2017;
+  --carta-tinta-2: #3a2e21;
+  --carta-tinta-3: #4a3c2c;
+  --carta-calado: #6f5c43;
+
+  /* estados */
+  --verde: #94b96f;
+  --verde-fundo: #3d6b2a;
+  --vermelho: #d08272;
+  --vermelho-fundo: #a8442f;
+
+  --display: Cinzel, Georgia, serif;
+  --corpo: Spectral, Georgia, serif;
+  --mono: ui-monospace, Menlo, Consolas, monospace;
+
+  font-size: 14px;
+  line-height: 1.5;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--fundo);
+  color: var(--pergaminho);
+  font-family: var(--corpo);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+#app {
+  height: 100%;
+}
+
+/* A textura de pedra é gradiente puro: a CSP do Tauri bloqueia recurso externo,
+   e embutir bitmap engordaria o binário à toa. */
+.textura {
+  background-color: var(--app);
+  background-image:
+    radial-gradient(ellipse at 50% -10%, rgba(212, 162, 74, 0.06), transparent 55%),
+    repeating-linear-gradient(112deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 7px);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--app);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--linha);
+  border: 2px solid var(--app);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--calado-4);
+}
+
+@keyframes kbpulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes kbslide {
+  0% {
+    margin-left: -35%;
+  }
+  100% {
+    margin-left: 100%;
+  }
+}
+
+/* --- primitivas --- */
+
+/* Rótulo de seção: versalete monoespaçado, o "carimbo" que separa os blocos. */
+.rotulo {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  color: var(--calado-3);
+}
+
+.painel {
+  background: var(--painel);
+  border: 1px solid var(--linha);
+  padding: 20px 22px;
+}
+
+/* Superfície clara, usada para o que o jogador lê com atenção: relatório de
+   partida, notícias, missões. Contraste invertido = destaque sem cor berrante. */
+.carta {
+  background: var(--carta);
+  border: 1px solid var(--carta-borda);
+  color: var(--carta-tinta);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.42);
+}
+
+.titulo-tela {
+  font-family: var(--display);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--pergaminho);
+  margin: 0;
+}
+.sub-tela {
+  font-size: 12.5px;
+  color: var(--calado);
+  font-style: italic;
+  margin: 0;
+}
+.cabecalho-tela {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--linha);
+}
+.tela {
+  padding: 26px 28px 36px;
+}
+
+.barra-prog {
+  height: 8px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--linha);
+  overflow: hidden;
+}
+.barra-prog > i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(180deg, var(--ouro-claro), var(--ouro-medio));
+  transition: width 0.2s linear;
+}
+.barra-prog.indeterminada > i {
+  width: 35%;
+  animation: kbslide 1.2s ease-in-out infinite;
+}
+
+/* Escudo hexagonal — o brasão que aparece em avatar, divisão e conquista. */
+.escudo {
+  background: linear-gradient(175deg, var(--linha), var(--madeira));
+  border: 1px solid var(--bronze);
+  clip-path: polygon(50% 0, 100% 16%, 100% 62%, 50% 100%, 0 62%, 0 16%);
+  display: grid;
+  place-items: center;
+}
+
+/* --- controles --- */
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
+.btn-ouro {
+  padding: 17px 52px;
+  background: linear-gradient(180deg, var(--ouro-claro), var(--ouro-medio));
+  border: 1px solid var(--bronze);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 21px;
+  letter-spacing: 0.2em;
+  color: var(--madeira);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 8px 22px rgba(0, 0, 0, 0.5);
+}
+.btn-ouro:hover:not(:disabled) {
+  background: linear-gradient(180deg, #f6d189, #bb8f3f);
+}
+.btn-ouro:disabled {
+  opacity: 0.45;
+  box-shadow: none;
+}
+
+/* Contorno sobre escuro. O padrão para tudo que não é a ação principal. */
+.btn-contorno {
+  padding: 9px 18px;
+  border: 1px solid var(--linha);
+  font-family: var(--display);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--calado);
+}
+.btn-contorno:hover:not(:disabled) {
+  border-color: var(--bronze);
+  color: var(--ouro);
+}
+.btn-contorno:disabled {
+  opacity: 0.5;
+}
+.btn-contorno.ativo {
+  border-color: var(--bronze);
+  background: rgba(212, 162, 74, 0.08);
+  color: var(--ouro);
+}
+.btn-contorno.perigo {
+  border-color: rgba(208, 130, 114, 0.5);
+  background: rgba(208, 130, 114, 0.07);
+  color: var(--vermelho);
+}
+.btn-contorno.perigo:hover:not(:disabled) {
+  background: rgba(208, 130, 114, 0.16);
+  color: var(--vermelho);
+}
+
+/* Mesmo contorno, mas sobre a carta clara. */
+.btn-carta {
+  padding: 7px 16px;
+  border: 1px solid var(--carta-borda);
+  font-family: var(--display);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--carta-tinta);
+}
+.btn-carta:hover:not(:disabled) {
+  background: rgba(90, 72, 48, 0.12);
+}
+
+/* Filtro de lista (TODAS / 1V1 / 2V2…). */
+.filtro {
+  padding: 7px 14px;
+  border: 1px solid var(--linha);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--calado);
+}
+.filtro:hover {
+  color: var(--pergaminho);
+}
+.filtro.ativo {
+  border-color: var(--bronze);
+  background: rgba(212, 162, 74, 0.08);
+  color: var(--ouro);
+}
+
+.selo {
+  padding: 4px 10px;
+  border: 1px solid #4a3a28;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--calado);
+}
+.selo.destaque {
+  border-color: var(--bronze);
+  background: rgba(212, 162, 74, 0.08);
+  color: var(--ouro);
+}
+
+.erro {
+  margin: 0;
+  color: var(--vermelho);
+  font-size: 12.5px;
+}
+.aviso {
+  margin: 0;
+  color: var(--verde);
+  font-size: 12.5px;
+}
+.mono {
+  font-family: var(--mono);
+}
