@@ -16,7 +16,7 @@ import { expect, test } from 'bun:test'
 process.env.DATABASE_URL ??= 'postgres://kb:kb@127.0.0.1:5432/kb-test'
 process.env.JWT_SECRET ??= 'x'.repeat(32)
 
-const { isAnnounceAllowed } = await import('./master.ts')
+const { apenasPublicos, isAnnounceAllowed } = await import('./master.ts')
 
 const DENTRO = '10.89.7.20'
 const FORA = '203.0.113.99'
@@ -41,4 +41,18 @@ test('a comparação é exata: não existe CIDR nem prefixo', () => {
   // teste é o que diz que não funciona. Ver peer-ip.ts.
   expect(isAnnounceAllowed('10.89.7.20', ['10.89.7.0/24'], false)).toBe(false)
   expect(isAnnounceAllowed('10.89.7.200', ['10.89.7.20'], false)).toBe(false)
+})
+
+test('o servidor de ranqueada nao aparece na lista publica', () => {
+  const todos = [
+    { name: 'Kam Brasil', port: 56789 },
+    { name: 'Kam Brasil Ranqueada', port: 56790 },
+  ]
+  expect(apenasPublicos(todos, 56790).map((s) => s.name)).toEqual(['Kam Brasil'])
+})
+
+test('sem porta de ranqueada configurada, nada e escondido', () => {
+  // Quem roda um servidor so continua vendo o proprio servidor na lista.
+  const todos = [{ name: 'Kam Brasil', port: 56789 }]
+  expect(apenasPublicos(todos, 0)).toHaveLength(1)
 })

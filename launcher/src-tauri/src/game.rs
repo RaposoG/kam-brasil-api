@@ -3,9 +3,9 @@
 //! Download e versionamento vivem em `install.rs`; geração dos arquivos
 //! derivados do jogo original, em `assets.rs`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::auth::AppState;
@@ -182,8 +182,61 @@ fn configure_game(nickname: &str, api_base: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A sala que o lobby ranqueado reservou no servidor dedicado.
+///
+/// Mesmos campos (e mesmos nomes) do `LobbyLaunch` de `src/api.ts` — a tela
+/// repassa o objeto do lobby inteiro, sem remontar nada.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Reserva {
+    pub ip: String,
+    pub porta: Option<u16>,
+    pub sala: i32,
+    pub senha: Option<String>,
+}
+
+/// O conteúdo do `KAMBRASIL_MATCH_FILE`, exatamente como
+/// `src/net/KM_KamBrasilMatch.pas` (repo do jogo) documenta o contrato: texto
+/// puro, uma `chave=valor` por linha.
+///
+/// A chave do endereço chama-se **`servidor`**, não `ip` — o Pascal lê
+/// `sl.Values['servidor']` e um `ip=` aqui não seria lido por ninguém.
+///
+/// `porta` e `senha` são opcionais lá; escrevemos as duas sempre, vazias quando
+/// não há valor, porque uma linha vazia lê igual a uma linha ausente e assim
+/// não há ramo a errar. Porta vazia = porta padrão do jogo; senha vazia = sala
+/// sem senha, que é o caso normal da ranqueada.
+///
+/// A senha vai crua: o Pascal **não** apara espaço dela nem tira aspas.
+fn arquivo_da_reserva(r: &Reserva) -> String {
+    let porta = r.porta.map(|p| p.to_string()).unwrap_or_default();
+    format!(
+        "servidor={}\r\nporta={}\r\nsala={}\r\nsenha={}\r\n",
+        r.ip,
+        porta,
+        r.sala,
+        r.senha.as_deref().unwrap_or(""),
+    )
+}
+
+/// Grava a reserva — ou apaga o arquivo velho quando não há reserva.
+///
+/// Apagar não é limpeza opcional: um arquivo deixado para trás faria o próximo
+/// jogo aberto pelo menu entrar na sala de uma partida anterior. Mesmo motivo
+/// pelo qual o token velho é removido.
+async fn escrever_reserva(caminho: &Path, reserva: Option<&Reserva>) -> Result<(), String> {
+    match reserva {
+        Some(r) => tokio::fs::write(caminho, arquivo_da_reserva(r))
+            .await
+            .map_err(|e| format!("não foi possível preparar a sala da partida: {e}")),
+        None => {
+            let _ = tokio::fs::remove_file(caminho).await;
+            Ok(())
+        }
+    }
+}
+
 #[tauri::command]
-pub async fn launch_game(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn launch_game(state: State<'_, AppState>, reserva: Option<Reserva>) -> Result<(), String> {
     let dir = game_dir();
     let exe = dir.join(EXE_NAME);
 
@@ -225,6 +278,15 @@ pub async fn launch_game(state: State<'_, AppState>) -> Result<(), String> {
             // de outro login.
             let _ = tokio::fs::remove_file(&token_path).await;
         }
+    }
+
+    // A sala reservada segue o mesmo caminho do token — arquivo temporário +
+    // variável de ambiente. Sem ela o jogo abre no menu, que é o certo quando
+    // ninguém pediu uma partida ranqueada.
+    let match_path = std::env::temp_dir().join("kambrasil-match.txt");
+    escrever_reserva(&match_path, reserva.as_ref()).await?;
+    if reserva.is_some() {
+        command.env("KAMBRASIL_MATCH_FILE", &match_path);
     }
 
     command
@@ -306,6 +368,59 @@ mod tests {
         assert!(replace_xml_attr(xml, "<Multiplayer", "Name", "Raposo").is_none());
     }
 
+    fn reserva(porta: Option<u16>, senha: Option<&str>) -> Reserva {
+        Reserva {
+            ip: "1.2.3.4".into(),
+            porta,
+            sala: 8,
+            senha: senha.map(String::from),
+        }
+    }
+
+    /// O contrato esta escrito no topo de src/net/KM_KamBrasilMatch.pas, no
+    /// repo do jogo. Chave errada nao da erro nenhum: o Pascal simplesmente le
+    /// vazio, `Disponivel` fica False e o jogo abre no menu -- o bug que esta
+    /// tarefa existe para matar.
+    #[test]
+    fn arquivo_da_reserva_bate_com_o_contrato_do_pascal() {
+        assert_eq!(
+            arquivo_da_reserva(&reserva(Some(56000), None)),
+            "servidor=1.2.3.4\r\nporta=56000\r\nsala=8\r\nsenha=\r\n"
+        );
+
+        // A chave e "servidor". "ip" e o nome do campo do lado da API/launcher,
+        // e o Pascal nao le esse nome.
+        assert!(!arquivo_da_reserva(&reserva(None, None)).contains("ip="));
+
+        // Porta ausente vira linha vazia (o Pascal cai na porta padrao); senha
+        // vai crua, sem aspas -- `senha="x"` entregaria a senha com aspas.
+        assert_eq!(
+            arquivo_da_reserva(&reserva(None, Some("s3nh4"))),
+            "servidor=1.2.3.4\r\nporta=\r\nsala=8\r\nsenha=s3nh4\r\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn sem_reserva_o_arquivo_velho_e_removido() {
+        let caminho = std::env::temp_dir().join("kambrasil-match-teste.txt");
+
+        escrever_reserva(&caminho, Some(&reserva(Some(56000), None)))
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&caminho).unwrap(),
+            "servidor=1.2.3.4\r\nporta=56000\r\nsala=8\r\nsenha=\r\n"
+        );
+
+        // Abrir o jogo pelo menu depois de uma ranqueada: sobrar o arquivo faria
+        // o jogo entrar na sala da partida anterior.
+        escrever_reserva(&caminho, None).await.unwrap();
+        assert!(!caminho.exists(), "arquivo da partida anterior ficou para tras");
+
+        // E sem arquivo nenhum tambem nao pode falhar.
+        escrever_reserva(&caminho, None).await.unwrap();
+    }
+
     #[test]
     fn caminho_do_jogo_fica_em_localappdata() {
         // Nao pode ser Arquivos de Programas: escrever la exige elevacao, e um
@@ -317,3 +432,4 @@ mod tests {
         assert!(!s.contains("Program Files"), "nao deveria instalar em Program Files: {s}");
     }
 }
+

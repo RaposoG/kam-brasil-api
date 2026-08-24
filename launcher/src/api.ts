@@ -97,7 +97,15 @@ export const assetsStatus = (): Promise<boolean> => invoke('assets_status')
 export const generateAssets = (originalPath: string): Promise<void> =>
   invoke('generate_assets', { originalPath })
 
-export const launchGame = (): Promise<void> => invoke('launch_game')
+/**
+ * Abre o jogo. Com `reserva`, o jogo entra direto na sala ranqueada em vez de
+ * parar no menu — o Rust grava os dados num arquivo e passa o caminho ao jogo
+ * pela variável de ambiente `KAMBRASIL_MATCH_FILE`.
+ */
+export const launchGame = (reserva?: LobbyLaunch): Promise<void> =>
+  // `?? null` de propósito: `undefined` some no JSON e o argumento chegaria
+  // ausente do outro lado. `null` chega como `None` sem depender disso.
+  invoke('launch_game', { reserva: reserva ?? null })
 
 // --- atualização do próprio launcher ---
 

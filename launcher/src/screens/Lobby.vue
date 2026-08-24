@@ -80,10 +80,9 @@ let abriu = false;
 async function abrirJogo() {
   abriu = true;
   try {
-    // ponytail: `launchGame` ainda não recebe a reserva da sala — quem entrega
-    // isso ao jogo é o KAMBRASIL_MATCH_FILE da Fase 1 (game.rs). Até lá o jogo
-    // abre no menu e os dados da sala ficam na tela, para entrar na mão.
-    await launchGame();
+    // Sem `launch` o jogo abre no menu — é o que sobra para o botão "ABRIR DE
+    // NOVO" enquanto a reserva não chega.
+    await launchGame(view.value?.launch);
   } catch (e) {
     erro.value = String(e);
   }
