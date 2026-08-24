@@ -65,11 +65,13 @@ const FROM_GAME_FILES = [
   'Changelog.txt',
 ]
 
-/**
- * De `data/defines` vão só os arquivos do projeto. `houses.dat` e `unit.dat`
- * são do Knights and Merchants original e são gerados na máquina do jogador.
- */
-const FROM_GAME_DEFINES = ['mapelem.dat', 'tiles.json', 'interp.dat']
+// houses.dat e unit.dat entram aqui desde que descobrimos que eram a causa dos
+// desyncs: eles definem as regras de casas e unidades e alimentam o calculo
+// deterministico da simulacao. Vindo da copia original de cada jogador, edicoes
+// diferentes do KaM davam regras diferentes e as partidas divergiam no meio.
+//
+// Sao os do KaM Remake, que rebalanceou as tabelas -- diferentes das de 1998.
+const FROM_GAME_DEFINES = ['mapelem.dat', 'tiles.json', 'interp.dat', 'houses.dat', 'unit.dat']
 
 const FROM_MAPS = ['Maps', 'MapsMP', 'Campaigns', 'Tutorials']
 
@@ -163,8 +165,11 @@ async function downloadAsset(tag: string, asset: string, dest: string, log: Prog
 /**
  * Monta a árvore completa e devolve o caminho.
  *
- * O que **não** entra: sprites, sons, músicas e os `.dat` de unidades e casas.
- * Vêm do jogo original e são gerados na máquina do jogador.
+ * O que **não** entra: sprites, sons e músicas. Vêm do jogo original e são
+ * gerados na máquina do jogador.
+ *
+ * Os `.dat` de casas e unidades ENTRAM: sao regras de simulacao e precisam ser
+ * identicos para todos, senao as partidas desincronizam.
  */
 export async function buildReleaseTree(binariesTag: string, log: Progress): Promise<string> {
   const out = join(config.SOURCES_DIR, '_tree')
@@ -210,6 +215,9 @@ export async function buildReleaseTree(binariesTag: string, log: Progress): Prom
     'data/text',
     'data/locales.txt', // KM_Resource.pas:212 — EAssertionFailed sem ele
     'data/defines/mapelem.dat',
+    // Sem estes dois identicos para todos, as partidas desincronizam no meio.
+    'data/defines/houses.dat',
+    'data/defines/unit.dat',
     'data/cursors',
     'data/gfx/fonts',
     'lib/vlc/libvlccore.dll', // KM_VLC.pas:10 — VLC_PATH fixo

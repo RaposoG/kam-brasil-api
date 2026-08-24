@@ -173,14 +173,19 @@ pub fn generate(app: &AppHandle, game: &Path, original: &Path) -> Result<(), Str
     let gfx = game.join("data").join("gfx");
     copy_glob(&original.join("data").join("gfx"), &gfx, &["bbm", "lbm", "dat"])?;
 
-    step("defines", "copiando dados de unidades e casas");
-    let defines = game.join("data").join("defines");
-    std::fs::create_dir_all(&defines).map_err(|e| e.to_string())?;
-    for name in ["houses.dat", "unit.dat"] {
-        let from = original.join("data").join("defines").join(name);
-        std::fs::copy(&from, defines.join(name))
-            .map_err(|e| format!("não foi possível copiar {name}: {e}"))?;
-    }
+    // houses.dat e unit.dat NAO sao copiados da copia original -- de proposito.
+    //
+    // Eles definem as regras de casas e unidades e entram no calculo
+    // deterministico da simulacao. Vindo da copia de cada jogador, edicoes
+    // diferentes do KaM davam regras diferentes e as partidas desincronizavam no
+    // meio: aconteceu no tick 17733, com tres jogadores.
+    //
+    // Agora eles vem da release, iguais para todo mundo, e o KaM Remake usa
+    // tabelas rebalanceadas que nem existem na copia de 1998.
+    //
+    // Nao ha nada a fazer aqui: quem tem a versao antiga em disco recebe a nossa
+    // no proximo update, porque files_to_download compara sha256 com o manifesto
+    // e rebaixa o que divergir.
 
     step("sons", "copiando efeitos sonoros");
     copy_dir(&original.join("data").join("sfx"), &game.join("data").join("sfx"))?;
