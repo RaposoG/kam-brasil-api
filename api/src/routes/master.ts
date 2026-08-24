@@ -72,6 +72,27 @@ function int(request: FastifyRequest, key: string, fallback = 0): number {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+/**
+ * Tira o servidor de ranqueada da lista pública.
+ *
+ * Ninguém escolhe entrar numa partida ranqueada pela aba de multiplayer: quem
+ * coloca o jogador lá é o pareamento, na sala reservada para ele.
+ *
+ * Escondido aqui e não parando de anunciar: é do anúncio vivo que
+ * `reservarSalas` tira o endereço para mandar os pareados. Deixar de anunciar
+ * desligaria a ranqueada inteira.
+ *
+ * Isto é discrição, não segurança — quem souber o IP e a porta ainda conecta.
+ * Quem recusa entrada de estranho é o próprio servidor dedicado.
+ */
+export function apenasPublicos<T extends { port: number }>(
+  servidores: readonly T[],
+  portaRanqueada: number = config.RANKED_SERVER_PORT,
+): T[] {
+  if (!portaRanqueada) return [...servidores]
+  return servidores.filter((s) => s.port !== portaRanqueada)
+}
+
 export default async function masterRoutes(app: FastifyInstance) {
   /** Um servidor se anuncia. Chamado periodicamente (a cada MasterAnnounceInterval). */
   app.get('/serveradd.php', async (request, reply) => {
@@ -148,7 +169,9 @@ export default async function masterRoutes(app: FastifyInstance) {
       order: { playerCount: 'DESC', name: 'ASC' },
     })
 
-    const body = servers
+    const publicos = apenasPublicos(servers)
+
+    const body = publicos
       .map((s) => `${s.name},${s.ip},${s.port},${s.dedicated ? 1 : 0},${s.os}`)
       .join('\n')
 
