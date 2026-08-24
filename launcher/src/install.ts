@@ -126,9 +126,9 @@ export const status = computed(() => {
   if (!original.value)
     return {
       acao: "original" as Acao,
-      titulo: "Precisamos do KaM Remake instalado",
+      titulo: "Precisamos do Knights and Merchants original",
       detalhe: "escolher a pasta manualmente",
-      curto: "aguardando o KaM Remake",
+      curto: "aguardando cópia original",
       pct: 0,
       indeterminado: false,
     };
@@ -159,7 +159,7 @@ export const status = computed(() => {
     return {
       acao: "preparar" as Acao,
       titulo: "Falta preparar os arquivos do jogo",
-      detalhe: "copia gráficos, sons e músicas do KaM Remake · leva alguns segundos",
+      detalhe: "converte gráficos e sons da sua cópia original · leva alguns minutos",
       curto: "assets pendentes",
       pct: 0,
       indeterminado: false,

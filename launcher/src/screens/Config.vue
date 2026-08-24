@@ -53,7 +53,7 @@ const linhas = computed(() => [
     executar: abrirPasta,
   },
   {
-    nome: "Instalação do KaM Remake",
+    nome: "Cópia original do KaM",
     valor: original.value ? `${original.value.path} (${original.value.source})` : "não encontrada",
     acao: "REVER",
     ocupado: false,
@@ -80,8 +80,8 @@ const linhas = computed(() => [
     executar: launcherNova.value ? atualizarLauncher : procurarLauncher,
   },
   {
-    nome: "Recopiar arquivos do KaM Remake",
-    valor: original.value ? "leva alguns segundos" : "precisa do KaM Remake primeiro",
+    nome: "Regerar assets do original",
+    valor: original.value ? "leva alguns minutos" : "precisa da cópia original primeiro",
     acao: "REGERAR",
     ocupado: busy.value || !original.value,
     executar: prepararAssets,

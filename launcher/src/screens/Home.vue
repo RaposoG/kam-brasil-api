@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   acaoPrincipal,
   atualizandoLauncher,
@@ -24,12 +23,6 @@ import {
   tempoRelativo,
 } from "../api";
 
-// Link externo em vez de download embutido: o KaM Remake e distribuicao de
-// terceiros, e apontar para a fonte oficial evita a gente virar espelho de um
-// binario que nao controla.
-function abrirSiteRemake() {
-  void openUrl("https://www.kamremake.com/download/");
-}
 
 const emit = defineEmits<{ ir: [tela: string] }>();
 
@@ -81,23 +74,6 @@ function dataCurta(iso: string) {
       </template>
     </section>
 
-
-      <!-- Sem o KaM Remake nao ha o que copiar: sprites, sons, musicas e as
-           regras de casas e unidades vem dele. Explicamos onde baixar em vez de
-           so dizer que falta, senao o jogador fica preso sem saber o que fazer. -->
-      <section v-if="status.acao === 'original'" class="aviso-remake">
-        <strong>O Kam Brasil precisa do KaM Remake instalado</strong>
-        <p>
-          Os gráficos, sons, músicas e as regras de casas e unidades vêm dele — e é o que
-          garante que todo mundo jogue com exatamente os mesmos arquivos. Sem isso, as
-          partidas dessincronizam no meio.
-        </p>
-        <p class="menor">
-          Instale o KaM Remake e, se ele não for encontrado sozinho, use o botão para apontar
-          a pasta. Ele por sua vez pede o Knights and Merchants original, que você precisa ter.
-        </p>
-        <button class="link-remake" @click="abrirSiteRemake">Baixar o KaM Remake (kamremake.com)</button>
-      </section>
     <div class="heroi">
       <div class="veu" />
       <div class="marca-arte">[ arte / screenshot do jogo ]</div>
@@ -181,45 +157,6 @@ function dataCurta(iso: string) {
 </template>
 
 <style scoped>
-/* Aviso de KaM Remake ausente: precisa competir com o herói ao lado sem virar
-   alerta agressivo — quem chega aqui não errou nada, só ainda não instalou. */
-.aviso-remake {
-  margin: 0 0 1rem;
-  padding: 1rem 1.2rem;
-  border: 1px solid var(--gold-dim);
-  border-radius: 4px;
-  background: rgba(212, 162, 74, 0.08);
-}
-.aviso-remake strong {
-  display: block;
-  margin-bottom: 0.5rem;
-  font-family: var(--serif);
-  font-size: 1.1rem;
-  color: var(--gold);
-}
-.aviso-remake p {
-  margin: 0 0 0.5rem;
-  font-size: 0.88rem;
-  line-height: 1.5;
-}
-.aviso-remake .menor {
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-.link-remake {
-  margin-top: 0.3rem;
-  padding: 0.5rem 0.9rem;
-  border: 1px solid var(--gold-dim);
-  border-radius: 3px;
-  background: transparent;
-  color: var(--gold);
-  font: inherit;
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-.link-remake:hover {
-  background: rgba(212, 162, 74, 0.14);
-}
 .faixa-launcher {
   display: flex;
   align-items: center;

@@ -5,6 +5,7 @@ mod install;
 mod local;
 mod original;
 mod ranked;
+mod speech;
 mod webview2;
 mod social;
 

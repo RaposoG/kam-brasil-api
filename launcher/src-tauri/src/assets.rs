@@ -76,20 +76,92 @@ fn copy_glob(from: &Path, to: &Path, extensions: &[&str]) -> Result<u32, String>
     Ok(count)
 }
 
+/// `.sng` é MP2 com outro nome. O jogo procura `.mp2` na pasta Music.
+fn copy_music(original: &Path, game: &Path) -> Result<u32, String> {
+    let songs = original.join("data").join("sfx").join("songs");
+    if !songs.is_dir() {
+        return Ok(0);
+    }
+    let music = game.join("Music");
+    std::fs::create_dir_all(&music).map_err(|e| e.to_string())?;
 
+    let mut count = 0;
+    for entry in std::fs::read_dir(&songs).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("sng")) != Some(true) {
+            continue;
+        }
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("track");
+        std::fs::copy(&path, music.join(format!("{stem}.mp2")))
+            .map_err(|e| format!("não foi possível copiar {}: {e}", path.display()))?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// Converte os `.rx` originais nos `.rxx` que o engine lê.
+///
+/// O engine **não** lê os `.rx` — só `.rxx` de `data/Sprites`. Sem esta etapa o
+/// jogo abre numa tela preta, sem erro nenhum.
+///
+/// O RXXPacker é um binário Delphi distribuído junto com a release. Ele precisa
+/// que os `.rx` do jogador e as pastas de sprites da comunidade estejam na mesma
+/// pasta de origem, e lê as paletas de `<jogo>/data/gfx` — por isso as paletas
+/// são copiadas antes.
+fn run_rxx_packer(game: &Path, original: &Path) -> Result<(), String> {
+    let packer = game.join("Utils").join("RXXPacker").join("RXXPacker.exe");
+    if !packer.is_file() {
+        return Err(format!(
+            "RXXPacker não encontrado em {} — a release precisa incluí-lo",
+            packer.display()
+        ));
+    }
+
+    // Pasta de trabalho: sprites da comunidade (vieram da release) + os .rx do
+    // jogador, lado a lado, que e o layout que o packer espera.
+    let source = game.join("SpriteResource");
+    std::fs::create_dir_all(&source).map_err(|e| e.to_string())?;
+    copy_glob(&original.join("data").join("gfx").join("res"), &source, &["rx"])?;
+
+    let dest = game.join("data").join("Sprites");
+    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+
+    let output = std::process::Command::new(&packer)
+        .current_dir(packer.parent().unwrap())
+        .arg("srx")
+        .arg(format!("{}\\", source.display()))
+        .arg("d")
+        .arg(format!("{}\\", dest.display()))
+        .arg("all")
+        .output()
+        .map_err(|e| format!("não foi possível executar o RXXPacker: {e}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "RXXPacker falhou: {}",
+            String::from_utf8_lossy(&output.stdout).lines().last().unwrap_or("erro desconhecido")
+        ));
+    }
+
+    // O packer relata erro no stdout sem falhar o processo, entao conferimos o
+    // resultado em vez de confiar no codigo de saida.
+    let produced = std::fs::read_dir(&dest)
+        .map(|d| d.filter_map(Result::ok).filter(|e| e.path().extension().is_some()).count())
+        .unwrap_or(0);
+
+    if produced == 0 {
+        return Err(format!(
+            "o RXXPacker não produziu sprites: {}",
+            String::from_utf8_lossy(&output.stdout).lines().last().unwrap_or("")
+        ));
+    }
+
+    Ok(())
+}
 
 /// Roda todas as etapas locais. Bloqueante e demorado — chame de spawn_blocking.
-/// Copia da instalação do KaM Remake o que não podemos distribuir.
-///
-/// Tudo aqui é **cópia direta**. Não empacotamos sprites, não convertemos áudio,
-/// não renomeamos nada: o KaM Remake já entrega os arquivos no formato e no
-/// lugar que o jogo espera.
-///
-/// Isso não é só economia de tempo (eram ~2 min de RXXPacker mais 22 s de
-/// conversão de vozes). É correção: gerar localmente produzia arquivos
-/// **diferentes** em cada máquina, e era a causa dos desyncs e do sprite da
-/// mina de ferro aparecer na versão antiga.
-pub fn generate(app: &AppHandle, game: &Path, remake: &Path) -> Result<(), String> {
+pub fn generate(app: &AppHandle, game: &Path, original: &Path) -> Result<(), String> {
     let step = |name: &str, detail: &str| {
         let _ = app.emit(
             "asset-progress",
@@ -97,22 +169,45 @@ pub fn generate(app: &AppHandle, game: &Path, remake: &Path) -> Result<(), Strin
         );
     };
 
-    step("sprites", "copiando gráficos");
-    // Os .rxx ja vem empacotados. Antes rodavamos o RXXPacker sobre os .rx do
-    // jogador, e o resultado nao batia com o do KaM Remake.
-    copy_dir(&remake.join("data").join("Sprites"), &game.join("data").join("Sprites"))?;
-
     step("paletas", "copiando paletas de cores");
-    copy_glob(&remake.join("data").join("gfx"), &game.join("data").join("gfx"), &["bbm", "lbm", "dat"])?;
+    let gfx = game.join("data").join("gfx");
+    copy_glob(&original.join("data").join("gfx"), &gfx, &["bbm", "lbm", "dat"])?;
 
-    step("sons", "copiando sons e vozes");
-    // Inclui as pastas speech.<idioma> com os .wav ja no formato certo. Antes
-    // copiavamos speech/ com .snd do original, que o jogo nunca encontrava.
-    copy_dir(&remake.join("data").join("sfx"), &game.join("data").join("sfx"))?;
+    // houses.dat e unit.dat NAO sao copiados da copia original -- de proposito.
+    //
+    // Eles definem as regras de casas e unidades e entram no calculo
+    // deterministico da simulacao. Vindo da copia de cada jogador, edicoes
+    // diferentes do KaM davam regras diferentes e as partidas desincronizavam no
+    // meio: aconteceu no tick 17733, com tres jogadores.
+    //
+    // Agora eles vem da release, iguais para todo mundo, e o KaM Remake usa
+    // tabelas rebalanceadas que nem existem na copia de 1998.
+    //
+    // Nao ha nada a fazer aqui: quem tem a versao antiga em disco recebe a nossa
+    // no proximo update, porque files_to_download compara sha256 com o manifesto
+    // e rebaixa o que divergir.
+
+    step("sons", "copiando efeitos sonoros");
+    copy_dir(&original.join("data").join("sfx"), &game.join("data").join("sfx"))?;
+    corrigir_pasta_de_fala(game)?;
+
+    step("vozes", "convertendo as falas das unidades");
+    let fala = game.join("data").join("sfx").join(PASTA_FALA);
+    let n = crate::speech::converter_falas(&fala, |i, t| {
+        let _ = app.emit("asset-progress", AssetProgress {
+            step: "vozes".into(),
+            detail: format!("convertendo falas ({i}/{t})"),
+        });
+    });
+    if n > 0 {
+        // Convertido uma vez; nas proximas execucoes ja existe .wav ao lado.
+    }
 
     step("musicas", "copiando trilha sonora");
-    // Ja sao .mp2. Antes renomeavamos os .sng do original.
-    copy_dir(&remake.join("Music"), &game.join("Music"))?;
+    copy_music(original, game)?;
+
+    step("sprites", "convertendo sprites — esta etapa demora alguns minutos");
+    run_rxx_packer(game, original)?;
 
     step("pronto", "");
     Ok(())
@@ -123,9 +218,9 @@ pub fn assets_ready(game: &Path) -> bool {
     let sprites = game.join("data").join("Sprites");
     let required = ["GUI.rxx", "GUIMain.rxx", "Houses.rxx", "Trees.rxx", "Units.rxx", "Tileset.rxx"];
 
-    // As vozes entram na conta: instalacoes antigas nao tem a pasta com sufixo
-    // de idioma e as tropas ficam mudas. Sem
-    // isto, ninguem seria convidado a refazer os arquivos.
+    // As vozes entram na conta: instalacoes feitas antes da conversao tem os
+    // .snd do jogo original, que o jogo nao le, e as tropas ficam mudas. Sem
+    // isto aqui, ninguem seria convidado a refazer os arquivos.
     let fala_pronta = game
         .join("data")
         .join("sfx")
@@ -166,6 +261,23 @@ pub async fn generate_assets(app: AppHandle, original_path: String) -> Result<()
 /// última tentativa acertar, seja qual for o idioma do jogador.
 const PASTA_FALA: &str = "speech.eng";
 
+/// Renomeia `data/sfx/speech` para `data/sfx/speech.eng` se ainda não estiver.
+///
+/// Idempotente e barata, para poder rodar a cada abertura do jogo: instalações
+/// antigas já têm os arquivos no lugar errado, e forçar todo mundo a reconverter
+/// sprites por causa de um nome de pasta seria dois minutos de espera à toa.
+pub fn corrigir_pasta_de_fala(game: &Path) -> Result<(), String> {
+    let sfx = game.join("data").join("sfx");
+    let certo = sfx.join(PASTA_FALA);
+    let errado = sfx.join("speech");
+
+    if certo.is_dir() || !errado.is_dir() {
+        return Ok(());
+    }
+
+    std::fs::rename(&errado, &certo)
+        .map_err(|e| format!("não foi possível renomear a pasta de vozes: {e}"))
+}
 
 #[cfg(test)]
 mod tests {
@@ -179,7 +291,44 @@ mod tests {
     }
 
 
+    /// O KaM original guarda as vozes em `speech/`; o Remake so procura
+    /// `speech.<idioma>/`. Sem o rename, as tropas ficam mudas.
+    #[test]
+    fn pasta_de_fala_ganha_o_sufixo_de_idioma() {
+        let game = temp_dir("fala");
+        let sfx = game.join("data").join("sfx");
+        std::fs::create_dir_all(sfx.join("speech").join("AXEMAN")).unwrap();
+        std::fs::write(sfx.join("speech").join("AXEMAN").join("0.wav"), "x").unwrap();
 
+        corrigir_pasta_de_fala(&game).unwrap();
+
+        assert!(sfx.join("speech.eng").join("AXEMAN").join("0.wav").is_file());
+        assert!(!sfx.join("speech").exists(), "a pasta antiga nao deveria sobrar");
+
+        let _ = std::fs::remove_dir_all(&game);
+    }
+
+    /// Roda a cada abertura do jogo: se ja estiver certo, nao pode mexer em nada
+    /// -- nem falhar quando nao existe pasta de som nenhuma.
+    #[test]
+    fn corrigir_pasta_de_fala_e_idempotente() {
+        let game = temp_dir("fala-idem");
+        let sfx = game.join("data").join("sfx");
+        std::fs::create_dir_all(sfx.join("speech.eng")).unwrap();
+        std::fs::write(sfx.join("speech.eng").join("marca"), "original").unwrap();
+        std::fs::create_dir_all(sfx.join("speech")).unwrap();
+
+        corrigir_pasta_de_fala(&game).unwrap();
+        corrigir_pasta_de_fala(&game).unwrap();
+
+        assert_eq!(std::fs::read_to_string(sfx.join("speech.eng").join("marca")).unwrap(), "original");
+
+        let vazio = temp_dir("fala-vazio");
+        assert!(corrigir_pasta_de_fala(&vazio).is_ok(), "sem pasta de som nao pode falhar");
+
+        let _ = std::fs::remove_dir_all(&game);
+        let _ = std::fs::remove_dir_all(&vazio);
+    }
     #[test]
     fn copia_apenas_as_extensoes_pedidas() {
         let from = temp_dir("glob-origem");
@@ -198,6 +347,23 @@ mod tests {
         let _ = std::fs::remove_dir_all(&to);
     }
 
+    #[test]
+    fn musica_vira_mp2() {
+        let original = temp_dir("musica-origem");
+        let game = temp_dir("musica-destino");
+        let songs = original.join("data").join("sfx").join("songs");
+        std::fs::create_dir_all(&songs).unwrap();
+        std::fs::write(songs.join("track_00.sng"), "x").unwrap();
+        std::fs::write(songs.join("leiame.txt"), "x").unwrap();
+
+        let n = copy_music(&original, &game).unwrap();
+
+        assert_eq!(n, 1);
+        assert!(game.join("Music").join("track_00.mp2").is_file(), "sng deveria virar mp2");
+
+        let _ = std::fs::remove_dir_all(&original);
+        let _ = std::fs::remove_dir_all(&game);
+    }
 
     #[test]
     fn assets_incompletos_nao_contam_como_prontos() {
