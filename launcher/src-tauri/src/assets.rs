@@ -184,6 +184,7 @@ pub fn generate(app: &AppHandle, game: &Path, original: &Path) -> Result<(), Str
 
     step("sons", "copiando efeitos sonoros");
     copy_dir(&original.join("data").join("sfx"), &game.join("data").join("sfx"))?;
+    corrigir_pasta_de_fala(game)?;
 
     step("musicas", "copiando trilha sonora");
     copy_music(original, game)?;
@@ -218,6 +219,36 @@ pub async fn generate_assets(app: AppHandle, original_path: String) -> Result<()
         .map_err(|e| format!("falha ao gerar os arquivos do jogo: {e}"))?
 }
 
+
+/// Nome que o jogo espera para a pasta de vozes das unidades.
+///
+/// O KaM original guarda as falas em `data/sfx/speech/`, sem sufixo. O Remake
+/// **sempre** monta `speech.` + idioma (KM_ResSound.pas): tenta o idioma do
+/// jogador, depois o fallback declarado em locales.txt, e por fim `eng`.
+///
+/// Para quem joga em português nenhum dos três existe -- `ptb` não tem fallback
+/// declarado --, então as tropas ficam mudas. Renomear para `speech.eng` faz a
+/// última tentativa acertar, seja qual for o idioma do jogador.
+const PASTA_FALA: &str = "speech.eng";
+
+/// Renomeia `data/sfx/speech` para `data/sfx/speech.eng` se ainda não estiver.
+///
+/// Idempotente e barata, para poder rodar a cada abertura do jogo: instalações
+/// antigas já têm os arquivos no lugar errado, e forçar todo mundo a reconverter
+/// sprites por causa de um nome de pasta seria dois minutos de espera à toa.
+pub fn corrigir_pasta_de_fala(game: &Path) -> Result<(), String> {
+    let sfx = game.join("data").join("sfx");
+    let certo = sfx.join(PASTA_FALA);
+    let errado = sfx.join("speech");
+
+    if certo.is_dir() || !errado.is_dir() {
+        return Ok(());
+    }
+
+    std::fs::rename(&errado, &certo)
+        .map_err(|e| format!("não foi possível renomear a pasta de vozes: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,6 +260,45 @@ mod tests {
         dir
     }
 
+
+    /// O KaM original guarda as vozes em `speech/`; o Remake so procura
+    /// `speech.<idioma>/`. Sem o rename, as tropas ficam mudas.
+    #[test]
+    fn pasta_de_fala_ganha_o_sufixo_de_idioma() {
+        let game = temp_dir("fala");
+        let sfx = game.join("data").join("sfx");
+        std::fs::create_dir_all(sfx.join("speech").join("AXEMAN")).unwrap();
+        std::fs::write(sfx.join("speech").join("AXEMAN").join("0.wav"), "x").unwrap();
+
+        corrigir_pasta_de_fala(&game).unwrap();
+
+        assert!(sfx.join("speech.eng").join("AXEMAN").join("0.wav").is_file());
+        assert!(!sfx.join("speech").exists(), "a pasta antiga nao deveria sobrar");
+
+        let _ = std::fs::remove_dir_all(&game);
+    }
+
+    /// Roda a cada abertura do jogo: se ja estiver certo, nao pode mexer em nada
+    /// -- nem falhar quando nao existe pasta de som nenhuma.
+    #[test]
+    fn corrigir_pasta_de_fala_e_idempotente() {
+        let game = temp_dir("fala-idem");
+        let sfx = game.join("data").join("sfx");
+        std::fs::create_dir_all(sfx.join("speech.eng")).unwrap();
+        std::fs::write(sfx.join("speech.eng").join("marca"), "original").unwrap();
+        std::fs::create_dir_all(sfx.join("speech")).unwrap();
+
+        corrigir_pasta_de_fala(&game).unwrap();
+        corrigir_pasta_de_fala(&game).unwrap();
+
+        assert_eq!(std::fs::read_to_string(sfx.join("speech.eng").join("marca")).unwrap(), "original");
+
+        let vazio = temp_dir("fala-vazio");
+        assert!(corrigir_pasta_de_fala(&vazio).is_ok(), "sem pasta de som nao pode falhar");
+
+        let _ = std::fs::remove_dir_all(&game);
+        let _ = std::fs::remove_dir_all(&vazio);
+    }
     #[test]
     fn copia_apenas_as_extensoes_pedidas() {
         let from = temp_dir("glob-origem");
