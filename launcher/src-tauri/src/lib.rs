@@ -4,7 +4,7 @@ mod game;
 mod install;
 mod local;
 mod original;
-mod speech;
+mod ranked;
 mod webview2;
 mod social;
 
@@ -44,6 +44,13 @@ pub fn run() {
             social::chat_fetch,
             social::chat_send,
             social::presence_heartbeat,
+            ranked::ranked_queue_join,
+            ranked::ranked_queue_leave,
+            ranked::ranked_queue_status,
+            ranked::ranked_lobby,
+            ranked::ranked_ban,
+            ranked::ranked_me,
+            ranked::ranked_leaderboard,
             local::list_replays,
             local::list_local_maps,
         ])

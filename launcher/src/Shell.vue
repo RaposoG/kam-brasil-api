@@ -5,6 +5,8 @@ import { iniciar } from "./install";
 import Dock from "./Dock.vue";
 import Home from "./screens/Home.vue";
 import Perfil from "./screens/Perfil.vue";
+import Ranqueada from "./screens/Ranqueada.vue";
+import Lobby from "./screens/Lobby.vue";
 import Ranking from "./screens/Ranking.vue";
 import Partidas from "./screens/Partidas.vue";
 import Replays from "./screens/Replays.vue";
@@ -23,12 +25,15 @@ defineEmits<{ sair: [] }>();
 provide("account", props.account);
 
 type Tela =
-  | "home" | "perfil" | "ranking" | "partidas" | "replays"
+  | "home" | "ranqueada" | "lobby" | "perfil" | "ranking" | "partidas" | "replays"
   | "mapas" | "temporada" | "conquistas" | "noticias" | "config";
 
+// `lobby` não tem item de menu: chega-se a ele pelo pareamento, e um menu para
+// uma sala que quase nunca existe seria botão morto na lateral.
 const TELAS = {
-  home: Home, perfil: Perfil, ranking: Ranking, partidas: Partidas, replays: Replays,
-  mapas: Mapas, temporada: Temporada, conquistas: Conquistas, noticias: Noticias, config: Config,
+  home: Home, ranqueada: Ranqueada, lobby: Lobby, perfil: Perfil, ranking: Ranking,
+  partidas: Partidas, replays: Replays, mapas: Mapas, temporada: Temporada,
+  conquistas: Conquistas, noticias: Noticias, config: Config,
 };
 
 const tela = ref<Tela>("home");
@@ -42,6 +47,7 @@ const GRUPOS: { titulo: string; itens: { id: Tela; label: string; tag: string }[
     titulo: "JOGO",
     itens: [
       { id: "home", label: "JOGAR", tag: "" },
+      { id: "ranqueada", label: "RANQUEADA", tag: "" },
       { id: "partidas", label: "PARTIDAS", tag: "" },
       { id: "replays", label: "REPLAYS", tag: "" },
       { id: "mapas", label: "MAPAS", tag: "" },

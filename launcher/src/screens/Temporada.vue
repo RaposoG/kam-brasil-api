@@ -1,14 +1,22 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import EmBreve from "../EmBreve.vue";
-import { fetchSeason } from "../api";
+import { type RankedMe, NOME_DO_TIER, fetchSeason, rankedMe } from "../api";
 
 // O catálogo da temporada vive na API (constante no código de lá) para mudar
 // conteúdo sem assinar release do launcher. Aqui só renderizamos.
 const season = ref<Awaited<ReturnType<typeof fetchSeason>>>(null);
 const pronto = ref(false);
 
+// O rank da temporada corrente. `null` = sem temporada aberta na API, sem
+// rede, ou ninguém jogou ainda — os três casos têm o mesmo remédio na tela.
+const eu = ref<RankedMe | null>(null);
+
 onMounted(async () => {
+  // Independente do catálogo: a trilha de recompensas não pode sumir porque a
+  // rota do rank respondeu 503.
+  rankedMe().then((m) => (eu.value = m)).catch(() => {});
+
   try {
     season.value = await fetchSeason();
   } catch {
@@ -16,6 +24,15 @@ onMounted(async () => {
   } finally {
     pronto.value = true;
   }
+});
+
+const emColocacao = computed(() => !!eu.value && !eu.value.tier);
+
+const tierDesde = computed(() => {
+  const quando = eu.value?.tierDesde;
+  return quando
+    ? new Date(quando).toLocaleDateString("pt-BR", { day: "numeric", month: "long" })
+    : "";
 });
 
 const dataLonga = (iso: string) =>
@@ -64,11 +81,44 @@ const restam = computed(() => {
         </div>
       </div>
 
-      <div class="bloco">
-        <EmBreve
-          titulo="Missões da semana"
-          descricao="As missões dependem de progresso por jogador — e progresso depende de o servidor reportar o resultado das partidas (Fase 1b). A trilha acima já é o catálogo real da temporada; as missões chegam junto com a contagem."
-        />
+      <div class="painel bloco">
+        <div class="trilha-cabeca">
+          <span class="rotulo">SUA CAMPANHA RANQUEADA</span>
+          <span class="nivel">{{ eu ? `${eu.partidas} PARTIDAS` : "—" }}</span>
+        </div>
+
+        <div v-if="eu" class="campanha">
+          <div class="campanha-marca">
+            <div class="campanha-valor">
+              <template v-if="emColocacao">{{ eu.colocacao.feitas }}/{{ eu.colocacao.total }}</template>
+              <template v-else>{{ NOME_DO_TIER[eu.tier!] }}</template>
+            </div>
+            <div class="campanha-label">
+              <template v-if="emColocacao">PARTIDAS DE COLOCAÇÃO</template>
+              <template v-else-if="tierDesde">NESTA DIVISÃO DESDE {{ tierDesde }}</template>
+              <template v-else>SUA DIVISÃO</template>
+            </div>
+          </div>
+
+          <div class="ultimos">
+            <div class="rotulo">ÚLTIMOS RESULTADOS</div>
+            <div class="fichas">
+              <!-- V/D no lugar de barra de progresso: informação real, e sem
+                   número que dê para engenharia reversa da pontuação. -->
+              <span v-for="(r, i) in eu.ultimos10" :key="i" class="ficha" :class="r === 'V' ? 'v' : 'd'">
+                {{ r }}
+              </span>
+              <span v-if="!eu.ultimos10.length" class="sem-fichas">
+                nenhuma partida ranqueada nesta temporada ainda.
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <p v-else class="sem-fichas bloco-sem">
+          O rank da temporada aparece aqui assim que você entrar na fila e a primeira partida for
+          registrada.
+        </p>
       </div>
     </template>
 
@@ -92,6 +142,69 @@ const restam = computed(() => {
 .trilha-bloco {
   padding: 26px 28px;
   margin-top: 22px;
+}
+
+.campanha {
+  display: flex;
+  align-items: center;
+  gap: 34px;
+  margin-top: 16px;
+}
+.campanha-marca {
+  flex: none;
+}
+.campanha-valor {
+  font-family: var(--display);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ouro);
+  line-height: 1.1;
+}
+.campanha-label {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  color: var(--calado-3);
+  margin-top: 3px;
+}
+.ultimos {
+  min-width: 0;
+}
+.fichas {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 9px;
+}
+.ficha {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--linha);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.ficha.v {
+  border-color: var(--verde-fundo);
+  background: rgba(148, 185, 111, 0.1);
+  color: var(--verde);
+}
+.ficha.d {
+  border-color: var(--vermelho-fundo);
+  background: rgba(208, 130, 114, 0.09);
+  color: var(--vermelho);
+}
+.sem-fichas {
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--calado-2);
+  text-wrap: pretty;
+}
+.bloco-sem {
+  margin: 14px 0 0;
 }
 .trilha-cabeca {
   display: flex;

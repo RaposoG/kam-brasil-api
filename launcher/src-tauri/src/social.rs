@@ -7,14 +7,7 @@
 
 use tauri::State;
 
-use crate::auth::{AppState, ChatMessage, FriendsOverview};
-
-/// O texto que a UI mostra quando a sessão sumiu — mesmo destino de um 401.
-fn require_token(state: &AppState) -> Result<String, String> {
-    state
-        .token()
-        .ok_or_else(|| "sessão expirada — entre novamente".to_string())
-}
+use crate::auth::{require_token, AppState, ChatMessage, FriendsOverview};
 
 #[tauri::command]
 pub async fn friends_list(state: State<'_, AppState>) -> Result<FriendsOverview, String> {

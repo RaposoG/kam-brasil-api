@@ -369,6 +369,45 @@ impl ApiClient {
             .map_err(|e| format!("resposta inesperada do servidor: {e}"))
     }
 
+    /// Requisição autenticada que devolve o JSON cru, sem tipar a resposta.
+    ///
+    /// Existe para as rotas do ranqueado: são sete formatos que só a interface
+    /// interpreta (fila, lobby de bans, tier, leaderboard). Tipar cada um aqui
+    /// manteria o mesmo contrato em dois lugares para o Rust nunca olhar para
+    /// nenhum campo — e todo campo novo da API viraria release do launcher.
+    pub async fn json_request(
+        &self,
+        token: &str,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        let mut pedido = self.client.request(method, self.url(path)).bearer_auth(token);
+        if let Some(body) = body {
+            pedido = pedido.json(&body);
+        }
+
+        let response = pedido
+            .send()
+            .await
+            .map_err(|e| format!("não foi possível falar com o servidor: {e}"))?;
+
+        if !response.status().is_success() {
+            return Err(Self::error_message(response).await);
+        }
+
+        // Sair da fila responde 204 sem corpo, e `serde_json` não engole vazio.
+        let corpo = response
+            .text()
+            .await
+            .map_err(|e| format!("resposta inesperada do servidor: {e}"))?;
+        if corpo.trim().is_empty() {
+            return Ok(serde_json::Value::Null);
+        }
+
+        serde_json::from_str(&corpo).map_err(|e| format!("resposta inesperada do servidor: {e}"))
+    }
+
     /// Marca a conta como "launcher aberto" — é isto que alimenta o online dos
     /// camaradas e o `launcherOnline` do overview.
     pub async fn presence_heartbeat(&self, token: &str) -> Result<(), String> {
@@ -446,6 +485,15 @@ impl AppState {
             }
         }
     }
+}
+
+/// O texto que a UI mostra quando a sessão sumiu — mesmo destino de um 401.
+/// Mora aqui, junto do estado que guarda o token, porque `social` e `ranked`
+/// precisam da mesma resposta e a mensagem não pode divergir entre as telas.
+pub(crate) fn require_token(state: &AppState) -> Result<String, String> {
+    state
+        .token()
+        .ok_or_else(|| "sessão expirada — entre novamente".to_string())
 }
 
 fn keyring_entry() -> Result<keyring::Entry, String> {

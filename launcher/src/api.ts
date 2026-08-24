@@ -75,7 +75,7 @@ export const restoreSession = (): Promise<Account | null> => invoke('restore_ses
 
 export const apiBase = (): Promise<string> => invoke('api_base')
 
-// --- jogo original ---
+// --- KaM Remake (origem dos arquivos que não distribuímos) ---
 
 /** `null` = não achamos; a UI precisa pedir a pasta ao jogador. */
 export const findOriginalGame = (): Promise<OriginalGame | null> => invoke('find_original_game')
@@ -181,6 +181,120 @@ export const chatSend = (body: string): Promise<ChatMessage> => invoke('chat_sen
 
 /** "Estou aberto" — alimenta o lastSeenAt que faz o online dos amigos existir. */
 export const presenceHeartbeat = (): Promise<void> => invoke('presence_heartbeat')
+
+// --- ranqueada (autenticada, via Rust) ---
+
+/** Fila única com marcação de modos — nunca uma fila por modo. */
+export type RankedMode = '1v1' | '2v2' | '3v3' | '4v4'
+
+export type Team = 'A' | 'B'
+
+/**
+ * O tier é a ÚNICA informação de rank que o jogador pode ver. `mu`, `sigma` e
+ * `c` não vêm da API — e se um dia vierem, esta camada não os repassa.
+ */
+export type Tier = 'recruta' | 'miliciano' | 'machadeiro' | 'espadachim' | 'besteiro' | 'barbaro' | 'comandante'
+
+/** Em ordem crescente. `comandante` é vaga (top 5), não faixa — daí vir por último. */
+export const TIERS: Tier[] = [
+  'recruta',
+  'miliciano',
+  'machadeiro',
+  'espadachim',
+  'besteiro',
+  'barbaro',
+  'comandante',
+]
+
+/** O slug é minúsculo e sem acento no banco; o nome bonito é assunto daqui. */
+export const NOME_DO_TIER: Record<Tier, string> = {
+  recruta: 'Recruta',
+  miliciano: 'Miliciano',
+  machadeiro: 'Machadeiro',
+  espadachim: 'Espadachim',
+  besteiro: 'Besteiro',
+  barbaro: 'Bárbaro',
+  comandante: 'Comandante do Rei',
+}
+
+export const rotuloModo = (m: RankedMode) => m.replace('v', ' × ')
+
+export interface QueueStatus {
+  /** `fora` = não está na fila. `matched` = já tem lobby (ver `lobbyId`). */
+  estado: 'fora' | 'waiting' | 'matched'
+  esperaSeg: number
+  modos: RankedMode[]
+  lobbyId?: string
+  /** Quantos aguardam em cada modo. Modo vazio vem zero, de propósito. */
+  aguardando: Record<RankedMode, number>
+}
+
+export interface LobbyJogador {
+  nickname: string
+  /** `null` = ainda em colocação. Nunca há pontuação junto. */
+  tier: Tier | null
+  time: Team
+  loc: number
+}
+
+export interface LobbyMapa {
+  id: string
+  nome: string
+  estado: 'livre' | 'banido'
+}
+
+/** A sala reservada no servidor dedicado. Só existe a partir do estado `launch`. */
+export interface LobbyLaunch {
+  ip: string
+  porta: number | null
+  sala: number
+  senha: string | null
+}
+
+export interface LobbyView {
+  estado: 'ban' | 'draw' | 'launch' | 'live' | 'done' | 'aborted'
+  mode: RankedMode
+  times: LobbyJogador[]
+  mapas: LobbyMapa[]
+  turnoTime: Team | null
+  /** ISO. O cronômetro do turno é a diferença para agora. */
+  turnoPrazo: string | null
+  mapaEscolhido?: { id: string; nome: string }
+  launch?: LobbyLaunch
+}
+
+export interface RankedMe {
+  /** `null` enquanto a colocação não fecha — até lá não existe tier a exibir. */
+  tier: Tier | null
+  tierDesde: string | null
+  colocacao: { feitas: number; total: number }
+  ultimos10: ('V' | 'D')[]
+  partidas: number
+}
+
+export interface LeaderboardRow {
+  posicao: number
+  nickname: string
+  tier: Tier
+}
+
+/** Reenviar com outros modos troca a marcação sem zerar a espera acumulada. */
+export const queueJoin = (modes: RankedMode[]): Promise<{ estado: string }> =>
+  invoke('ranked_queue_join', { modes })
+
+export const queueLeave = (): Promise<void> => invoke('ranked_queue_leave')
+
+export const queueStatus = (): Promise<QueueStatus> => invoke('ranked_queue_status')
+
+export const lobbyFetch = (lobbyId: string): Promise<LobbyView> => invoke('ranked_lobby', { lobbyId })
+
+/** 409 = não é o seu turno (ou o lobby já saiu da fase de bans). */
+export const lobbyBan = (lobbyId: string, mapId: string): Promise<unknown> =>
+  invoke('ranked_ban', { lobbyId, mapId })
+
+export const rankedMe = (): Promise<RankedMe> => invoke('ranked_me')
+
+export const rankedLeaderboard = (): Promise<LeaderboardRow[]> => invoke('ranked_leaderboard')
 
 // --- arquivos locais do jogo ---
 
