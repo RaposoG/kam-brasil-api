@@ -15,6 +15,7 @@ import Temporada from "./screens/Temporada.vue";
 import Conquistas from "./screens/Conquistas.vue";
 import Noticias from "./screens/Noticias.vue";
 import Config from "./screens/Config.vue";
+import Doacoes from "./screens/Doacoes.vue";
 
 const props = defineProps<{ account: Account }>();
 defineEmits<{ sair: [] }>();
@@ -26,14 +27,14 @@ provide("account", props.account);
 
 type Tela =
   | "home" | "ranqueada" | "lobby" | "perfil" | "ranking" | "partidas" | "replays"
-  | "mapas" | "temporada" | "conquistas" | "noticias" | "config";
+  | "mapas" | "temporada" | "conquistas" | "noticias" | "config" | "doacoes";
 
 // `lobby` não tem item de menu: chega-se a ele pelo pareamento, e um menu para
 // uma sala que quase nunca existe seria botão morto na lateral.
 const TELAS = {
   home: Home, ranqueada: Ranqueada, lobby: Lobby, perfil: Perfil, ranking: Ranking,
   partidas: Partidas, replays: Replays, mapas: Mapas, temporada: Temporada,
-  conquistas: Conquistas, noticias: Noticias, config: Config,
+  conquistas: Conquistas, noticias: Noticias, config: Config, doacoes: Doacoes,
 };
 
 const tela = ref<Tela>("home");
@@ -64,6 +65,12 @@ const GRUPOS: { titulo: string; itens: { id: Tela; label: string; tag: string }[
   },
   { titulo: "COMUNIDADE", itens: [{ id: "noticias", label: "NOTÍCIAS", tag: "" }] },
 ];
+
+// Fora dos GRUPOS de propósito: doar não é uma seção do jogo, e enfiar a aba
+// entre PERFIL e RANKING a faria virar ruído no meio da navegação. Aqui ela é
+// um item à parte, no fim, com destaque próprio.
+const APOIO = { id: "doacoes" as Tela, label: "APOIAR O PROJETO" };
+
 
 const inicial = computed(() => props.account.nickname.charAt(0).toUpperCase());
 
@@ -123,6 +130,13 @@ onUnmounted(() => clearInterval(heartbeat));
             <span class="item-tag">{{ item.tag }}</span>
           </button>
         </div>
+
+        <!-- Destaque próprio, fora dos grupos: é um pedido, não uma seção do
+             jogo. Coração em vez de ícone de moeda — o que se pede aqui é
+             apoio, e cifrão na navegação dá cara de loja. -->
+        <button class="item apoiar" :class="{ ativo: tela === APOIO.id }" @click="ir(APOIO.id)">
+          <span>♥ {{ APOIO.label }}</span>
+        </button>
       </div>
 
       <div class="rodape-lateral">
@@ -142,6 +156,27 @@ onUnmounted(() => clearInterval(heartbeat));
 </template>
 
 <style scoped>
+/* A aba de apoio precisa se distinguir sem gritar: quem entra aqui quer jogar,
+   não ser cobrado. Borda dourada e um brilho contido bastam — animação ou cor
+   berrante viraria banner de anúncio, e a pessoa aprenderia a ignorar. */
+.item.apoiar {
+  margin-top: 1.2rem;
+  border: 1px solid var(--gold-dim);
+  border-radius: 3px;
+  background: linear-gradient(180deg, rgba(212, 162, 74, 0.14), rgba(212, 162, 74, 0.05));
+  color: var(--gold);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  box-shadow: inset 0 1px 0 rgba(212, 162, 74, 0.18);
+}
+.item.apoiar:hover {
+  background: linear-gradient(180deg, rgba(212, 162, 74, 0.22), rgba(212, 162, 74, 0.1));
+  border-color: var(--gold);
+}
+.item.apoiar.ativo {
+  background: linear-gradient(180deg, rgba(212, 162, 74, 0.28), rgba(212, 162, 74, 0.14));
+  border-color: var(--gold);
+}
 .corpo {
   height: 100%;
   display: grid;
