@@ -10,7 +10,7 @@
 //! | Destino | Origem |
 //! |---|---|
 //! | `data/gfx/*.bbm`, `*.lbm`, `*.dat` | cópia direta (paletas) |
-//! | `data/defines/houses.dat`, `unit.dat` | cópia direta |
+//! | ~~`data/defines/houses.dat`, `unit.dat`~~ | **não** — vêm da release (ver abaixo) |
 //! | `data/sfx/` | cópia direta |
 //! | `Music/*.mp2` | `data/sfx/songs/*.sng` renomeados |
 //! | `data/Sprites/*.rxx` | **RXXPacker** sobre os `.rx` (~2 min) |
