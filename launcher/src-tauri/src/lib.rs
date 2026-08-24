@@ -4,6 +4,7 @@ mod game;
 mod install;
 mod local;
 mod original;
+mod speech;
 mod social;
 
 use auth::AppState;

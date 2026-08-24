@@ -186,6 +186,18 @@ pub fn generate(app: &AppHandle, game: &Path, original: &Path) -> Result<(), Str
     copy_dir(&original.join("data").join("sfx"), &game.join("data").join("sfx"))?;
     corrigir_pasta_de_fala(game)?;
 
+    step("vozes", "convertendo as falas das unidades");
+    let fala = game.join("data").join("sfx").join(PASTA_FALA);
+    let n = crate::speech::converter_falas(&fala, |i, t| {
+        let _ = app.emit("asset-progress", AssetProgress {
+            step: "vozes".into(),
+            detail: format!("convertendo falas ({i}/{t})"),
+        });
+    });
+    if n > 0 {
+        // Convertido uma vez; nas proximas execucoes ja existe .wav ao lado.
+    }
+
     step("musicas", "copiando trilha sonora");
     copy_music(original, game)?;
 
@@ -200,8 +212,21 @@ pub fn generate(app: &AppHandle, game: &Path, original: &Path) -> Result<(), Str
 pub fn assets_ready(game: &Path) -> bool {
     let sprites = game.join("data").join("Sprites");
     let required = ["GUI.rxx", "GUIMain.rxx", "Houses.rxx", "Trees.rxx", "Units.rxx", "Tileset.rxx"];
+
+    // As vozes entram na conta: instalacoes feitas antes da conversao tem os
+    // .snd do jogo original, que o jogo nao le, e as tropas ficam mudas. Sem
+    // isto aqui, ninguem seria convidado a refazer os arquivos.
+    let fala_pronta = game
+        .join("data")
+        .join("sfx")
+        .join(PASTA_FALA)
+        .join("AXEMAN")
+        .join("ATTACK0.wav")
+        .is_file();
+
     required.iter().all(|f| sprites.join(f).is_file())
         && game.join("data").join("defines").join("unit.dat").is_file()
+        && fala_pronta
 }
 
 #[tauri::command]

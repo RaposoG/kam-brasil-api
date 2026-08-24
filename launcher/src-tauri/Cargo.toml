@@ -44,6 +44,11 @@ sha2 = "0.10"
 # cacheaveis do Cloudflare -- cada uma ia ate o VPS, a ~1s de ida e volta.
 zip = "8.6.0"
 
+# Decodificador MP2 em Rust puro. As vozes das unidades do KaM original sao
+# .snd, que e MPEG-1 Layer II; o jogo so aceita .wav. Sem isto as tropas ficam
+# mudas. Rust puro evita depender de DLL de audio na maquina do jogador.
+symphonia = { version = "0.6.1", default-features = false, features = ["mp2"] }
+
 # Localiza a pasta Documentos respeitando redirecionamento (OneDrive, por
 # exemplo). Hardcodar %USERPROFILE%\Documents erraria nessas maquinas.
 dirs = "6"

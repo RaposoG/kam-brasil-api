@@ -129,9 +129,6 @@ fn master_url(api_base: &str) -> String {
 /// - **Master server** em `KaM Remake Server Settings.ini`. Sem isto o jogo
 ///   lista os servidores oficiais em vez dos nossos.
 fn configure_game(nickname: &str, api_base: &str) -> Result<(), String> {
-    // Instalações feitas antes da correção têm as vozes em `data/sfx/speech`, que
-    // o jogo nunca procura. Barato e idempotente, então roda a cada abertura.
-    let _ = crate::assets::corrigir_pasta_de_fala(&game_dir());
 
     // Tira o nosso master server da pasta compartilhada, se alguma versão
     // anterior o tiver deixado lá.
