@@ -98,6 +98,19 @@ export const generateAssets = (originalPath: string): Promise<void> =>
   invoke('generate_assets', { originalPath })
 
 /**
+ * O mapa da partida está no disco? Conferência local, sem rede — é o par
+ * `MapsMP/<nome>/<nome>.dat` + `.map` que o jogo exige.
+ *
+ * Numa sala ranqueada o servidor impõe o setup e recusa o repasse do host, e o
+ * download de mapa do próprio jogo passa pelo host. Abrir sem o mapa deixa a
+ * barra do jogador em 0 kb para sempre.
+ */
+export const mapReady = (nome: string): Promise<boolean> => invoke('map_ready', { nome })
+
+/** Baixa só a pasta desse mapa da release atual. Erro = não está na release. */
+export const downloadMap = (nome: string): Promise<void> => invoke('download_map', { nome })
+
+/**
  * Abre o jogo. Com `reserva`, o jogo entra direto na sala ranqueada em vez de
  * parar no menu — o Rust grava os dados num arquivo e passa o caminho ao jogo
  * pela variável de ambiente `KAMBRASIL_MATCH_FILE`.

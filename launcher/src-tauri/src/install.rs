@@ -164,33 +164,42 @@ async fn fetch_manifest(url: &str) -> Result<Manifest, String> {
         .map_err(|e| format!("manifesto inesperado: {e}"))
 }
 
-#[tauri::command]
-pub async fn check_update(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let dir = game_dir();
-    let installed = read_installed(&dir).map(|i| i.version);
-
+/// `GET /client/latest`. `None` quando a API ainda não publicou versão nenhuma
+/// (404) — que é estado normal, não erro.
+async fn latest_release(api_base: &str) -> Result<Option<LatestRelease>, String> {
     let response = reqwest::Client::new()
-        .get(format!("{}/client/latest", state.api_base()))
+        .get(format!("{api_base}/client/latest"))
         .send()
         .await
         .map_err(|e| format!("não foi possível consultar a versão: {e}"))?;
 
     if response.status().as_u16() == 404 {
+        return Ok(None);
+    }
+    if !response.status().is_success() {
+        return Err(format!("a API respondeu {} ao consultar a versão", response.status()));
+    }
+
+    response
+        .json()
+        .await
+        .map(Some)
+        .map_err(|e| format!("resposta inesperada da API: {e}"))
+}
+
+#[tauri::command]
+pub async fn check_update(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let dir = game_dir();
+    let installed = read_installed(&dir).map(|i| i.version);
+
+    let Some(latest) = latest_release(&state.api_base()).await? else {
         return Ok(serde_json::json!({
             "path": dir.display().to_string(),
             "installedVersion": installed,
             "latest": null,
             "needsUpdate": false,
         }));
-    }
-    if !response.status().is_success() {
-        return Err(format!("a API respondeu {} ao consultar a versão", response.status()));
-    }
-
-    let latest: LatestRelease = response
-        .json()
-        .await
-        .map_err(|e| format!("resposta inesperada da API: {e}"))?;
+    };
 
     let needs_update = installed.as_deref() != Some(latest.version.as_str());
 
@@ -200,6 +209,91 @@ pub async fn check_update(state: State<'_, AppState>) -> Result<serde_json::Valu
         "latest": latest,
         "needsUpdate": needs_update,
     }))
+}
+
+/// O jogo só enxerga um mapa quando a pasta tem o par `<nome>.dat` +
+/// `<nome>.map` — é o que o próprio scanner dele exige
+/// (`KM_Maps.pas:804`), e é desse par que sai o CRC que o servidor ranqueado
+/// compara com o da reserva.
+///
+/// Por isso a conferência é pelo par, não pela pasta: uma pasta pela metade é
+/// **pior** que pasta nenhuma. O jogo entra na sala sem o mapa, tenta baixá-lo
+/// do host — e numa sala ranqueada o servidor impõe o setup e recusa o repasse
+/// do host, então a barra fica em 0 kb para sempre e ninguém consegue sair
+/// disso. Foi exatamente o que travou o teste ao vivo.
+pub fn mapa_completo(dir: &Path, nome: &str) -> bool {
+    let pasta = dir.join("MapsMP").join(nome);
+    pasta.join(format!("{nome}.dat")).is_file() && pasta.join(format!("{nome}.map")).is_file()
+}
+
+/// Os arquivos da release que pertencem a `MapsMP/<nome>/`.
+fn arquivos_do_mapa(manifest: &Manifest, nome: &str) -> Vec<ManifestFile> {
+    // A barra no fim não é detalhe: sem ela "Arena" arrastaria junto os
+    // arquivos de "Arena 2" — os dois existem em MapsMP/.
+    //
+    // Comparação sem caixa porque os dois lados vêm de fontes diferentes: o
+    // nome sai da temporada na API, o caminho sai da árvore de arquivos.
+    let prefixo = format!("mapsmp/{}/", nome.to_lowercase());
+    manifest
+        .files
+        .iter()
+        .filter(|f| f.path.to_lowercase().starts_with(&prefixo))
+        .cloned()
+        .collect()
+}
+
+/// Conferência instantânea, sem rede: o mapa da partida está no disco?
+#[tauri::command]
+pub fn map_ready(nome: String) -> bool {
+    mapa_completo(&game_dir(), nome.trim())
+}
+
+/// Baixa **só** a pasta do mapa da release atual.
+///
+/// Reaproveita a mesma maquinaria da instalação: `files_to_download` decide o
+/// que falta pelo sha256 e `download_one` baixa com verificação e troca
+/// atômica. O que sobra aqui é filtrar o manifesto.
+#[tauri::command]
+pub async fn download_map(state: State<'_, AppState>, nome: String) -> Result<(), String> {
+    let nome = nome.trim().to_string();
+    let dir = game_dir();
+
+    let release = latest_release(&state.api_base())
+        .await?
+        .ok_or("a API não tem nenhuma versão do jogo publicada")?;
+    let manifest = fetch_manifest(&release.manifest_url).await?;
+
+    let mut so_o_mapa = manifest.clone();
+    so_o_mapa.files = arquivos_do_mapa(&manifest, &nome);
+
+    // Mapa de temporada que ainda não entrou numa release: baixar é impossível,
+    // e o jogador precisa saber disso em vez de ficar olhando um download.
+    if so_o_mapa.files.is_empty() {
+        return Err(format!(
+            "o mapa \"{nome}\" não existe na versão {} do jogo. Avise a organização da temporada — não há o que baixar.",
+            release.version
+        ));
+    }
+
+    let client = reqwest::Client::new();
+    let bytes = AtomicU64::new(0);
+
+    // ponytail: sequencial. Um mapa é ~10 arquivos (~270 KB), uns 10 s; o pior
+    // caso real é "CiW 2x2", com 122 arquivos, perto de 2 min. Se incomodar,
+    // o Semaphore + JoinSet de `install_update` logo abaixo já resolve.
+    for file in files_to_download(&dir, &so_o_mapa, |_| {}) {
+        download_one(&client, &release.base_url, &dir, &file, &bytes).await?;
+    }
+
+    // A release podia ter a pasta sem o par que o jogo exige. Devolver Ok aqui
+    // faria a tela abrir o jogo achando que estava tudo certo.
+    if !mapa_completo(&dir, &nome) {
+        return Err(format!(
+            "o mapa \"{nome}\" foi baixado incompleto (falta o .dat ou o .map). Reinstale o jogo pelas Configurações."
+        ));
+    }
+
+    Ok(())
 }
 
 /// Quantos arquivos baixar ao mesmo tempo.
@@ -719,6 +813,58 @@ mod tests {
         assert!(!dir.parent().unwrap().join("fora.txt").exists(), "escapou da pasta");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A conferencia e pelo par .dat + .map, nunca pela pasta. Uma pasta
+    /// existente e vazia (download interrompido, release incompleta) e o pior
+    /// caso: o jogo entra na sala sem o mapa, tenta baixar do host, o servidor
+    /// ranqueado bloqueia o host, e a barra fica em 0 kb para sempre.
+    #[test]
+    fn mapa_so_conta_como_pronto_com_o_par_dat_e_map() {
+        let dir = temp_dir("mapa-par");
+        let pasta = dir.join("MapsMP").join("CiW 2x2");
+        std::fs::create_dir_all(&pasta).unwrap();
+
+        assert!(!mapa_completo(&dir, "CiW 2x2"), "pasta vazia nao e mapa instalado");
+
+        std::fs::write(pasta.join("CiW 2x2.dat"), "d").unwrap();
+        assert!(!mapa_completo(&dir, "CiW 2x2"), "so o .dat nao basta");
+
+        // Lixo do download interrompido nao pode passar por mapa.
+        std::fs::write(pasta.join("CiW 2x2.map.kbpart"), "m").unwrap();
+        assert!(!mapa_completo(&dir, "CiW 2x2"), ".kbpart e download pela metade");
+
+        std::fs::write(pasta.join("CiW 2x2.map"), "m").unwrap();
+        assert!(mapa_completo(&dir, "CiW 2x2"), "com o par o jogo enxerga o mapa");
+
+        assert!(!mapa_completo(&dir, "Babylon"), "mapa nunca instalado");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// "Arena" e "Arena 2" sao mapas reais e vizinhos em MapsMP/. Sem a barra
+    /// no fim do prefixo, baixar "Arena" arrastaria a pasta do outro junto.
+    #[test]
+    fn filtro_do_mapa_nao_vaza_para_o_vizinho_de_nome_parecido() {
+        let m = manifest_of(&[
+            ("MapsMP/Arena/Arena.dat", "d"),
+            ("MapsMP/Arena/Arena.map", "m"),
+            ("MapsMP/Arena 2/Arena 2.dat", "d2"),
+            ("MapsMP/Arena 2/Arena 2.map", "m2"),
+            ("KaM_Remake.exe", "exe"),
+        ]);
+
+        let so_arena: Vec<_> = arquivos_do_mapa(&m, "Arena").into_iter().map(|f| f.path).collect();
+        assert_eq!(so_arena, vec!["MapsMP/Arena/Arena.dat", "MapsMP/Arena/Arena.map"]);
+
+        assert_eq!(arquivos_do_mapa(&m, "Arena 2").len(), 2);
+
+        // O nome vem da temporada na API; o caminho, da arvore de arquivos.
+        assert_eq!(arquivos_do_mapa(&m, "arena").len(), 2, "caixa diferente nao pode zerar o filtro");
+
+        // Vazio e o sinal de "nao esta na release" -- e a mensagem que o
+        // jogador recebe depende disso.
+        assert!(arquivos_do_mapa(&m, "Babylon").is_empty());
     }
 
     #[test]

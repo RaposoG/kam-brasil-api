@@ -36,6 +36,8 @@ pub fn run() {
             auth::api_base,
             install::check_update,
             install::install_update,
+            install::map_ready,
+            install::download_map,
             game::game_status,
             game::launch_game,
             original::find_original_game,

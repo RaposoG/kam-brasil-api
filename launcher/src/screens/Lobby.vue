@@ -5,9 +5,11 @@ import {
   type LobbyView,
   type Team,
   NOME_DO_TIER,
+  downloadMap,
   launchGame,
   lobbyBan,
   lobbyFetch,
+  mapReady,
   queueStatus,
   rotuloModo,
 } from "../api";
@@ -77,8 +79,64 @@ const acabou = computed(() => view.value?.estado === "done" || view.value?.estad
 // sem esta trava ele reabriria o jogo a cada 1,5 s.
 let abriu = false;
 
+/**
+ * O mapa da partida precisa estar no disco ANTES de o jogo abrir.
+ *
+ * Numa sala ranqueada o servidor impõe o setup e recusa o repasse do host — e
+ * o download de mapa do jogo passa justamente pelo host. Quem entra sem o mapa
+ * fica com a barra em 0 kb para sempre, e nem sair da tela consegue.
+ */
+const mapaEstado = ref<"conferindo" | "baixando" | "pronto" | "faltando" | null>(null);
+
+async function conferirMapa(nome: string): Promise<boolean> {
+  mapaEstado.value = "conferindo";
+  try {
+    if (!(await mapReady(nome))) {
+      mapaEstado.value = "baixando";
+      await downloadMap(nome);
+    }
+    mapaEstado.value = "pronto";
+    return true;
+  } catch (e) {
+    mapaEstado.value = "faltando";
+    erro.value = String(e);
+    return false;
+  }
+}
+
+// Uma vez só por lobby: o poll passa por aqui a cada 1,5 s.
+let mapaPronto: Promise<boolean> | null = null;
+
+const garantirMapa = (nome: string) => (mapaPronto ??= conferirMapa(nome));
+
+/** O jogador precisa saber por que está esperando — ou por que não abriu. */
+const recadoMapa = computed(() => {
+  const nome = view.value?.mapaEscolhido?.nome ?? "";
+  switch (mapaEstado.value) {
+    case "conferindo":
+      return `Conferindo “${nome}” na sua instalação…`;
+    case "baixando":
+      return `Baixando “${nome}” — só na primeira vez, e o jogo só abre depois.`;
+    case "pronto":
+      return `Mapa “${nome}” conferido na sua instalação.`;
+    case "faltando":
+      return `“${nome}” não está na sua instalação e não foi possível baixá-lo — por isso o jogo não abriu.`;
+    default:
+      return "";
+  }
+});
+
 async function abrirJogo() {
   abriu = true;
+  const nome = view.value?.mapaEscolhido?.nome;
+  // Botão "ABRIR DE NOVO" depois de falhar: tenta o download de novo em vez de
+  // devolver na hora o mesmo erro guardado.
+  if (mapaEstado.value === "faltando") mapaPronto = null;
+
+  // Abrir sem o mapa é esconder o problema: o jogo trava no lobby com um
+  // download que nunca anda. Melhor não abrir e dizer o que falta.
+  if (nome && !(await garantirMapa(nome))) return;
+
   try {
     // Sem `launch` o jogo abre no menu — é o que sobra para o botão "ABRIR DE
     // NOVO" enquanto a reserva não chega.
@@ -91,6 +149,9 @@ async function abrirJogo() {
 /** O que a tela faz com um lobby — venha ele do socket ou do poll. */
 function aplicar(novo: LobbyView) {
   view.value = novo;
+  // Já no sorteio, antes da reserva ficar pronta: o download acontece enquanto
+  // o servidor prepara a sala, e no `launch` normalmente já está tudo no disco.
+  if (novo.mapaEscolhido) garantirMapa(novo.mapaEscolhido.nome);
   if (novo.estado === "launch" && novo.launch && !abriu) abrirJogo();
 }
 
@@ -203,12 +264,16 @@ onUnmounted(() => {
           <div>
             <div class="faixa-titulo">Mapa sorteado: {{ view.mapaEscolhido?.nome ?? "—" }}</div>
             <p class="acao-sub">Sorteado entre os mapas que sobraram dos bans. A sala está sendo reservada.</p>
+            <p v-if="recadoMapa" class="acao-sub mapa-status" :class="mapaEstado">{{ recadoMapa }}</p>
           </div>
         </template>
 
         <template v-else-if="view.estado === 'launch'">
           <div>
-            <div class="faixa-titulo">Abrindo o jogo…</div>
+            <div class="faixa-titulo">
+              {{ mapaEstado === "faltando" ? "O jogo não pôde abrir" : "Abrindo o jogo…" }}
+            </div>
+            <p v-if="recadoMapa" class="acao-sub mapa-status" :class="mapaEstado">{{ recadoMapa }}</p>
             <p class="acao-sub">
               <template v-if="view.launch">
                 Servidor {{ view.launch.ip }}<template v-if="view.launch.porta">:{{ view.launch.porta }}</template>
@@ -217,7 +282,9 @@ onUnmounted(() => {
               <template v-else>Aguardando a reserva da sala no servidor dedicado.</template>
             </p>
           </div>
-          <button class="btn-contorno" @click="abrirJogo">ABRIR DE NOVO</button>
+          <button class="btn-contorno" :disabled="mapaEstado === 'baixando'" @click="abrirJogo">
+            {{ mapaEstado === "faltando" ? "TENTAR DE NOVO" : "ABRIR DE NOVO" }}
+          </button>
         </template>
 
         <template v-else-if="view.estado === 'live'">
@@ -333,6 +400,21 @@ onUnmounted(() => {
   text-wrap: pretty;
   max-width: 66ch;
 }
+/* O jogador tem que saber por que está esperando: sem isto, "Abrindo o jogo…"
+   fica na tela durante um download de minutos sem explicar nada. */
+.mapa-status {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+}
+.mapa-status.conferindo,
+.mapa-status.baixando {
+  color: var(--ouro-medio);
+}
+.mapa-status.faltando {
+  color: var(--vermelho);
+}
+
 .relogio {
   flex: none;
   font-family: var(--display);
