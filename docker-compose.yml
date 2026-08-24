@@ -118,8 +118,15 @@ services:
       RANKED_BAN_TURNO_SEG: ${RANKED_BAN_TURNO_SEG:-25}
       # Bloco de salas reservado para o ranqueado, dentro do MAX_ROOMS do
       # gameserver-ranked: indice fora do maximo e sala que nao existe.
-      RANKED_ROOM_FIRST: ${RANKED_ROOM_FIRST:-8}
-      RANKED_ROOM_COUNT: ${RANKED_ROOM_COUNT:-8}
+      # 0..15, o servidor de ranqueada INTEIRO. O bloco 8-15 de antes existia
+      # porque um servidor so dividia casual (0-7) e ranqueada; agora a
+      # ranqueada tem container proprio e reservar metade so desperdicava.
+      #
+      # Capacidade importa: 30 jogadores em 1v1 querem 15 salas, e com 8 os
+      # lobbies excedentes esperam -- e `abortarLobbiesTravados` derruba quem
+      # passa do prazo, abortando gente que so estava na fila por capacidade.
+      RANKED_ROOM_FIRST: ${RANKED_ROOM_FIRST:-0}
+      RANKED_ROOM_COUNT: ${RANKED_ROOM_COUNT:-16}
       # Endereco que vai para a lista de servidores. Sem ele os jogadores
       # recebem o IP interno do container e nao conectam em nada -- mas a API
       # sobe assim mesmo, e avisa no log.
