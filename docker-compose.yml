@@ -60,10 +60,15 @@ services:
       # X-Forwarded-For -- senao qualquer um se passaria por interno.
       ANNOUNCE_ALLOWED_IPS: ${ANNOUNCE_ALLOWED_IPS:-127.0.0.1}
       VERIFY_ALLOWED_IPS: ${VERIFY_ALLOWED_IPS:-127.0.0.1}
-      # Ranqueada. O mesmo segredo tem que chegar aos dois lados: a API o exige
-      # em /internal/ranked/*, e o gameserver o manda na querystring. Vazio nos
-      # dois = ranqueada desligada, e e o padrao seguro -- mas metade preenchida
-      # e o pior dos mundos: o servidor pergunta e leva 403 a cada 3s.
+      # Ranqueada ligada por padrao. RANKED_ENABLED=false desliga fila,
+      # pareamento e tempo real -- historico e perfil seguem de pe.
+      RANKED_ENABLED: ${RANKED_ENABLED:-true}
+      # O mesmo segredo tem que chegar aos dois lados. Ninguem precisa definir:
+      # a API sorteia 32 bytes na primeira subida e grava neste arquivo, e o
+      # entrypoint do gameserver le o mesmo caminho no volume compartilhado.
+      #
+      # Definir RANKED_INTERNAL_SECRET a mao continua valendo e tem precedencia.
+      RANKED_SECRET_FILE: /app/shared/ranked-secret
       RANKED_INTERNAL_SECRET: ${RANKED_INTERNAL_SECRET:-}
       RANKED_ALLOWED_EXE_CRCS: ${RANKED_ALLOWED_EXE_CRCS:-}
       RANKED_TICK_MS: ${RANKED_TICK_MS:-3000}
@@ -115,6 +120,9 @@ services:
       # Cache dos repositorios de conteudo (mapas, textos, sprites). Sem volume,
       # cada release reclonaria centenas de MB em vez de dar um fetch.
       - sources:/app/sources
+      # So o segredo interno da ranqueada. Volume proprio, e nao um canto do
+      # `sources`, para poder ir read-only no gameserver: ele le, nunca escreve.
+      - ranked-secret:/app/shared
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
@@ -144,6 +152,8 @@ services:
     # Efeito colateral: a porta do jogo se publica no servico `api`, acima, e
     # reiniciar a API exige reiniciar este container junto.
     network_mode: "service:api"
+    volumes:
+      - ranked-secret:/app/shared:ro
     environment:
       SERVER_NAME: ${SERVER_NAME:-Kam Brasil}
       SERVER_PORT: ${SERVER_PORT:-56789}
@@ -157,14 +167,14 @@ services:
       # Base das rotas internas da ranqueada -- o servidor acrescenta /rooms,
       # /started e /report. Loopback pelo mesmo motivo do AUTH_VERIFY_URL: o
       # segredo vai na querystring, em texto claro, e nao pode sair da maquina.
-      #
-      # Vazio desliga: o servidor nem consulta a fila. Com RANKED_INTERNAL_SECRET
-      # definido no .env os dois lados ligam juntos, que e o unico jeito de isso
-      # funcionar -- um lado so produz 403 a cada 3s.
-      RANKED_URL: ${RANKED_INTERNAL_SECRET:+http://127.0.0.1:3000/internal/ranked}
+      RANKED_URL: http://127.0.0.1:3000/internal/ranked
+      # Vazio de proposito: o entrypoint le o segredo do arquivo que a API
+      # gravou. Definir RANKED_INTERNAL_SECRET no .env sobrepoe os dois lados.
       RANKED_SECRET: ${RANKED_INTERNAL_SECRET:-}
+      RANKED_SECRET_FILE: /app/shared/ranked-secret
 
 volumes:
   postgres-data:
   releases:
   sources:
+  ranked-secret:

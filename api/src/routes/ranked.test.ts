@@ -82,8 +82,12 @@ function repoFake(rows: unknown[] = []) {
   }
 }
 
+/** Toda SQL emitida, para os testes que precisam olhar a forma da consulta. */
+const sqlEmitidas: string[] = []
+
 /** Roteia por trecho da SQL, na ordem em que as rotas as emitem. */
 async function queryFake(sql: string) {
+  sqlEmitidas.push(sql)
   if (sql.includes('season_maps')) return POOL
   if (sql.includes('match_players')) return [{ wonOrLost: 'won' }, { wonOrLost: 'lost' }]
   if (sql.includes('player_ratings')) return [LINHA_APEX]
@@ -95,6 +99,9 @@ async function queryFake(sql: string) {
 // já é trocado por `admin.test.ts`. Ver o comentário em fila-repos.ts.
 await mock.module('../ranked/fila-repos.ts', () => ({
   dataSource: {
+    // O laço do ranqueado pula o tique com o banco fora do ar (ele nasce antes
+    // do `dataSource.initialize()` — ver server.ts). O duble simula banco de pé.
+    isInitialized: true,
     query: queryFake,
     manager: { query: queryFake },
     transaction: async (fn: (manager: unknown) => Promise<unknown>) =>
@@ -168,7 +175,7 @@ function novosJogadores(): LobbyPlayer[] {
   ] as LobbyPlayer[]
 }
 
-function buildApp(contaId = EU): FastifyInstance {
+function buildApp(contaId = EU, tickMs = 0): FastifyInstance {
   lobbyAtual = novoLobby()
   jogadoresDoLobby = novosJogadores()
 
@@ -182,7 +189,7 @@ function buildApp(contaId = EU): FastifyInstance {
     }),
   )
   // tickMs 0: o teste exercita as rotas, não o setInterval.
-  app.register(rankedRoutes, { tickMs: 0 })
+  app.register(rankedRoutes, { tickMs })
   return app
 }
 
@@ -216,6 +223,22 @@ test('GET /ranked/me não devolve mu, sigma nem c — só o nome do tier', async
   expect(res.json().tier).toBe('espadachim')
   expect(res.json().ultimos10).toEqual(['V', 'D'])
   expect(res.json().colocacao).toEqual({ feitas: 10, total: 10 })
+
+  await app.close()
+})
+
+test('os últimos 10 de /ranked/me descartam wonOrLost = none, como /accounts/:id/stats', async () => {
+  // O dublê devolve linhas fixas, então a garantia tem que ser na forma da SQL:
+  // sem este filtro, uma partida que acabou sem decidir o lado do jogador
+  // aparece como derrota — e a mesma conta na outra tela mostra outro número.
+  sqlEmitidas.length = 0
+  const app = buildApp()
+
+  await app.inject({ method: 'GET', url: '/ranked/me' })
+
+  const historico = sqlEmitidas.find((sql) => sql.includes('match_players'))
+  expect(historico).toBeDefined()
+  expect(historico).toContain(`"wonOrLost" <> 'none'`)
 
   await app.close()
 })
@@ -429,4 +452,42 @@ test('a sala reservada sai do bloco, e bloco cheio devolve null em vez de repeti
 
   const cheio = new Set(Array.from({ length: TOTAL }, (_, i) => PRIMEIRA + i))
   expect(primeiraSalaLivre(cheio)).toBeNull()
+})
+
+test('o tique solta a entrada de fila que ficou presa em lobby encerrado', async () => {
+  // `criarLobby` marca a entrada como `matched`, e o `delete` do timeout e o
+  // `DELETE /ranked/queue` só alcançam `waiting`. Sem esta varredura, terminada
+  // a primeira partida o jogador tomava 409 "você já está em um lobby" para
+  // sempre — uma ranqueada por conta e por temporada.
+  sqlEmitidas.length = 0
+
+  const app = buildApp(EU, 5)
+  await app.ready()
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  await app.close()
+
+  const varreu = sqlEmitidas.some(
+    (sql) => sql.includes('delete from "queue_entries"') && sql.includes("'done'") && sql.includes("'aborted'"),
+  )
+  expect(varreu).toBe(true)
+})
+
+test('o tique aborta lobby travado em draw/launch e invalida a partida fantasma', async () => {
+  // `draw` sem servidor dedicado e `launch` sem ninguém abrindo o jogo não
+  // tinham saída nenhuma: a conta ficava `matched` para sempre (409 "você já
+  // está em um lobby") e cada `launch` abandonado queimava uma sala do bloco.
+  sqlEmitidas.length = 0
+
+  const app = buildApp(EU, 5)
+  await app.ready()
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  await app.close()
+
+  const abortou = sqlEmitidas.find((sql) => sql.includes(`update "lobbies" set "estado" = 'aborted'`))
+  expect(abortou).toBeDefined()
+  // Os dois estados travados, e só eles: `live` é partida em andamento.
+  expect(abortou).toContain(`'draw', 'launch'`)
+  expect(abortou).not.toContain(`'live'`)
+  // A partida criada na reserva vai junto, senão sobra `pending` no feed.
+  expect(abortou).toContain(`update "matches"`)
 })

@@ -38,13 +38,21 @@ const tierDesde = computed(() => {
 const dataLonga = (iso: string) =>
   new Date(iso).toLocaleDateString("pt-BR", { day: "numeric", month: "long" });
 
-const periodo = computed(() =>
-  season.value ? `${dataLonga(season.value.startsAt)} a ${dataLonga(season.value.endsAt)}` : "",
-);
+// Temporada sem data de fim é normal: o admin pode abrir a temporada e só
+// depois decidir quando fecha. Sem guarda, `new Date(null)` vira a epoch e a
+// tela anuncia "1 de janeiro" e "faltam 0 dias" — contagem regressiva mentirosa
+// é pior do que contagem nenhuma.
+const periodo = computed(() => {
+  if (!season.value) return "";
+  const inicio = dataLonga(season.value.startsAt);
+  return season.value.endsAt ? `${inicio} a ${dataLonga(season.value.endsAt)}` : `desde ${inicio}`;
+});
 
+/** `null` = sem data de fim, e aí a contagem regressiva não aparece. */
 const restam = computed(() => {
-  if (!season.value) return 0;
-  return Math.max(0, Math.ceil((new Date(season.value.endsAt).getTime() - Date.now()) / 86_400_000));
+  const fim = season.value?.endsAt;
+  if (!fim) return null;
+  return Math.max(0, Math.ceil((new Date(fim).getTime() - Date.now()) / 86_400_000));
 });
 </script>
 
@@ -53,7 +61,7 @@ const restam = computed(() => {
     <div class="cabecalho-tela sozinho">
       <div v-if="season">
         <h1 class="titulo-tela">Temporada {{ season.number }} · {{ season.name }}</h1>
-        <p class="sub-tela">{{ periodo }} · faltam {{ restam }} dias</p>
+        <p class="sub-tela">{{ periodo }}<template v-if="restam !== null"> · faltam {{ restam }} dias</template></p>
       </div>
       <div v-else>
         <h1 class="titulo-tela">Temporada</h1>

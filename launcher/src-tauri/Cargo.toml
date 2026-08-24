@@ -59,6 +59,24 @@ dirs = "6"
 tokio = { version = "1", features = ["fs", "io-util", "sync", "time", "rt"] }
 tauri-plugin-dialog = "2.7.2"
 
+# Canal de tempo real da fila e do lobby de bans (`ranked_ws.rs`). O reqwest nao
+# fala WebSocket, e o socket precisa viver no Rust: ele e autenticado com o token
+# de sessao, que nunca pode chegar a webview.
+#
+# rustls-tls-webpki-roots pelo mesmo motivo do reqwest acima -- mesmo TLS e a
+# mesma store de certificados em qualquer maquina, sem SChannel/OpenSSL.
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
+
+# `next()` e `send()` no socket: o WebSocketStream e Stream + Sink, e as
+# extensoes moram aqui. Ja estava na arvore como dependencia indireta.
+futures-util = { version = "0.3", default-features = false }
+
+# So para escolher o provedor de criptografia do rustls no boot do socket. A
+# arvore tem aws-lc-rs e ring compilados juntos (reqwest e quinn), e nesse caso
+# o rustls se recusa a adivinhar: sem a escolha explicita, a primeira conexao
+# wss:// mataria a thread com panico em vez de erro.
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
+
 # Auto-atualizacao do proprio launcher.
 #
 # Todo pacote e assinado e a chave publica fica embutida no binario. Isso importa

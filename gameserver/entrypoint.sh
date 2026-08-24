@@ -19,11 +19,30 @@ set -eu
 : "${AUTH_VERIFY_URL:=http://127.0.0.1:3000/auth/verify}"
 : "${REQUIRE_AUTH:=1}"
 
-# Salas ranqueadas. Vazio desliga o recurso inteiro: o servidor nem consulta a
-# fila. Fica assim por padrão de propósito — sem o segredo configurado, um
-# polling a cada 5s só produziria 401 no log.
-: "${RANKED_URL:=}"
+# Salas ranqueadas, ligadas por padrão. A API responde lista vazia quando não há
+# nada pareado, então perguntar não custa nada nem polui log.
+: "${RANKED_URL:=http://127.0.0.1:3000/internal/ranked}"
 : "${RANKED_SECRET:=}"
+: "${RANKED_SECRET_FILE:=}"
+
+# O segredo não vem da env: a API o sorteia na primeira subida e grava no
+# arquivo do volume compartilhado. Lemos o mesmo arquivo, e é assim que os dois
+# lados combinam sem ninguém configurar nada.
+#
+# Chegamos sempre depois: o compose só sobe este container com a API saudável,
+# e a API grava o arquivo antes de abrir a porta.
+if [ -z "${RANKED_SECRET}" ] && [ -n "${RANKED_SECRET_FILE}" ] && [ -r "${RANKED_SECRET_FILE}" ]; then
+  # tr -d '\r\n', e nao so '\n': um \r sobrando entra no sha256 e todo
+  # /internal/ranked/* passa a responder 403 sem dizer por que, em silencio.
+  RANKED_SECRET="$(tr -d '\r\n' < "${RANKED_SECRET_FILE}")"
+fi
+
+if [ -z "${RANKED_SECRET}" ]; then
+  # Metade preenchida é o pior dos mundos: o servidor perguntaria a cada 3s e
+  # levaria 403 sempre. Sem segredo, nem pergunta.
+  echo "kam-brasil: sem segredo de ranqueada, salas ranqueadas desligadas neste servidor"
+  RANKED_URL=""
+fi
 
 cat > "/app/KaM Remake Server Settings.ini" <<INI
 [Server]

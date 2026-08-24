@@ -3,8 +3,11 @@ mod auth;
 mod game;
 mod install;
 mod local;
+mod matches;
 mod original;
 mod ranked;
+mod ranked_ws;
+mod replay;
 mod speech;
 mod webview2;
 mod social;
@@ -52,6 +55,11 @@ pub fn run() {
             ranked::ranked_ban,
             ranked::ranked_me,
             ranked::ranked_leaderboard,
+            ranked_ws::ranked_ws_start,
+            ranked_ws::ranked_ws_stop,
+            matches::matches_history,
+            matches::account_stats,
+            replay::upload_replay,
             local::list_replays,
             local::list_local_maps,
         ])

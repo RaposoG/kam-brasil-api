@@ -479,6 +479,100 @@ async function reservarSalas(app: FastifyInstance) {
   }
 }
 
+/**
+ * Quanto tempo um lobby pode ficar entre o sorteio e o `live` antes de virar
+ * `aborted`. Cobre o servidor dedicado subindo, o jogo carregando e os dois
+ * lados entrando na sala — com folga, porque abortar cedo demais cancela
+ * partida que ia acontecer.
+ */
+const PRAZO_LANCAMENTO_SEG = 180
+
+/**
+ * Aborta lobby que sorteou o mapa e nunca virou partida.
+ *
+ * `ban` tem prazo (`cobrarTurnosVencidos`) e `live`/`done` têm o reporte do
+ * servidor dedicado — mas `draw` e `launch` não tinham saída **nenhuma**, e as
+ * duas travas eram permanentes:
+ *
+ * - `draw`: sem servidor dedicado anunciado, `reservarSalas` só loga "reserva
+ *   adiada" e volta no tique seguinte, para sempre. Uma janela do gameserver
+ *   fora do ar trancava as contas pareadas nela.
+ * - `launch`: quem foi pareado e simplesmente não abre o jogo deixa a reserva
+ *   viva. `/internal/ranked/rooms` publica aquela sala eternamente e
+ *   `reservarSalas` conta ela em `emUso` — com `RANKED_ROOM_COUNT` dodges o
+ *   bloco inteiro fica ocupado e nenhum lobby novo reserva sala de novo.
+ *
+ * Nos dois casos a entrada de fila fica `matched` e `POST /ranked/queue`
+ * responde 409 "você já está em um lobby" para sempre, porque `DELETE
+ * /ranked/queue` só alcança `waiting`. Abortar devolve os três de uma vez: a
+ * varredura de `soltarQuemSaiuDoLobby` (logo abaixo) já solta entrada de lobby
+ * `aborted`, e a sala sai de `emUso` no mesmo tique.
+ *
+ * O relógio é `criadoEm` + o teto da fase de bans, e **não** uma coluna nova:
+ * a fase de bans tem duração máxima conhecida (`BANS_TOTAIS` turnos de
+ * `RANKED_BAN_TURNO_SEG`), então somá-la ao prazo dá o mesmo resultado que um
+ * `sorteadoEm` sem custar migration. `live` fica de fora de propósito —
+ * partida em andamento não tem prazo, e quem a encerra é o reporte.
+ *
+ * Uma instrução só (CTE que altera dados) porque as duas escritas precisam ser
+ * atômicas: um lobby abortado com a partida ainda `pending` reaparece no feed
+ * de `/matches` como partida fantasma, sem jogadores e sem vencedor.
+ *
+ * ponytail: sem punição por no-show. Suspender quem não abriu o jogo é decisão
+ * de produto (o `Lobby.vue` ainda deixa entrar na sala na mão, então "não abriu
+ * o launcher" e "dodge" não são distinguíveis aqui) — o que não é decisão de
+ * produto é a conta ficar trancada para sempre, e é só isso que esta varredura
+ * conserta. `punirAbandono` continua só no caminho do reporte.
+ */
+async function abortarLobbiesTravados(app: FastifyInstance) {
+  const tetoDosBans = BANS_TOTAIS * config.RANKED_BAN_TURNO_SEG
+  const limite = new Date(Date.now() - (tetoDosBans + PRAZO_LANCAMENTO_SEG) * 1_000)
+
+  const travados = (await dataSource.query(
+    `with morto as (
+       update "lobbies" set "estado" = 'aborted'
+        where "estado" in ('draw', 'launch') and "criadoEm" < $1
+       returning "id", "estado", "matchId", "roomIndex"
+     ), fantasma as (
+       update "matches"
+          set "status" = 'invalid',
+              "invalidMotivo" = 'lobby expirou sem virar partida',
+              "encerradoEm" = now()
+        where "id" in (select "matchId" from morto where "matchId" is not null)
+          and "status" = 'pending'
+       returning "id"
+     )
+     select "id", "matchId", "roomIndex" from morto`,
+    [limite],
+  )) as { id: string; matchId: string | null; roomIndex: number | null }[]
+
+  for (const lobby of travados) {
+    app.log.warn(lobby, 'lobby expirou sem virar partida: abortado, sala e fila liberadas')
+  }
+}
+
+/**
+ * Solta quem ficou preso numa entrada de fila apontando para lobby encerrado.
+ *
+ * `criarLobby` marca a entrada como `matched` e **nada nunca a apagava**: o
+ * `delete` do timeout e o `DELETE /ranked/queue` só alcançam `waiting`. Efeito
+ * com dado real: terminada a primeira partida, `POST /ranked/queue` respondia
+ * 409 "você já está em um lobby" para sempre, `GET /ranked/queue/status`
+ * continuava dizendo `matched` com o lobby morto e o tempo real reempurrava
+ * aquele lobby — uma ranqueada por conta e por temporada.
+ *
+ * A varredura mora aqui, e não em cada rota que fecha lobby (`/report`,
+ * `/void`, o aborto por mapa sumido), porque são três produtores do mesmo
+ * estado: uma varredura conserta os três e o quarto que aparecer.
+ */
+async function soltarQuemSaiuDoLobby() {
+  await dataSource.query(
+    `delete from "queue_entries" q
+      using "lobbies" l
+     where q."lobbyId" = l."id" and l."estado" in ('done', 'aborted')`,
+  )
+}
+
 async function parearFila(app: FastifyInstance) {
   const season = await temporadaAtiva()
   if (!season) return
@@ -544,8 +638,18 @@ export function iniciarLacoRanqueado(app: FastifyInstance, intervaloMs = config.
     // Tique mais lento que o intervalo não pode se sobrepor: dois pareamentos
     // simultâneos leriam a mesma fila e criariam a mesma partida duas vezes.
     if (rodando) return
+    // O laço nasce no registro do plugin, que roda **antes** do
+    // `dataSource.initialize()` (ver a ordem em server.ts). Sem esta guarda,
+    // todo boot em que conectar + migrar demora mais que RANKED_TICK_MS cospe
+    // um "tique do ranqueado falhou" por tique até o banco subir — e erro de
+    // rotina no boot é justamente o que esconde erro de verdade.
+    if (!dataSource.isInitialized) return
     rodando = true
     try {
+      // Antes de soltar a fila: abortar aqui faz a entrada `matched` do lobby
+      // travado ser varrida no mesmo tique, e não só no próximo.
+      await abortarLobbiesTravados(app)
+      await soltarQuemSaiuDoLobby()
       await cobrarTurnosVencidos(app)
       await reservarSalas(app)
       await parearFila(app)
@@ -724,11 +828,17 @@ export default async function rankedRoutes(app: FastifyInstance, opcoes: OpcoesR
       where: { accountId: request.account.id, seasonId: season.id },
     })
 
+    // `<> 'none'`: `ranked-internal.ts` grava 'none' quando a partida acabou sem
+    // decidir o lado deste jogador, e a lista é binária (V/D) — sem o filtro,
+    // 'none' virava derrota. Mesma regra de `/accounts/:id/stats`
+    // (`matches.ts`), que preenche o **mesmo** campo `ultimos10` na outra tela:
+    // com regras diferentes, as duas telas contradiziam uma à outra.
     const historico = (await dataSource.query(
       `select mp."wonOrLost"
          from "match_players" mp
          join "matches" ma on ma."id" = mp."matchId"
         where mp."accountId" = $1 and ma."seasonId" = $2 and ma."status" = 'valid'
+          and mp."wonOrLost" <> 'none'
         order by ma."iniciadoEm" desc
         limit 10`,
       [request.account.id, season.id],

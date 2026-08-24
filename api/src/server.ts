@@ -4,7 +4,7 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import fastifyStatic from '@fastify/static'
 import { config } from './config.ts'
-import { dataSource } from './data-source.ts'
+import { dataSource, seasons } from './data-source.ts'
 import authPlugin from './plugins/auth.ts'
 import authRoutes from './routes/auth.ts'
 import masterRoutes from './routes/master.ts'
@@ -17,6 +17,10 @@ import catalogRoutes from './routes/catalog.ts'
 import adminRoutes from './routes/admin.ts'
 import rankedInternalRoutes from './routes/ranked-internal.ts'
 import rankedRoutes from './routes/ranked.ts'
+import matchesRoutes from './routes/matches.ts'
+import replayRoutes from './routes/replay.ts'
+import reportsRoutes from './routes/reports.ts'
+import tempoRealRoutes from './ranked/tempo-real.ts'
 
 const app = Fastify({
   trustProxy: config.TRUST_PROXY,
@@ -68,9 +72,27 @@ await app.register(newsRoutes)
 await app.register(socialRoutes)
 await app.register(catalogRoutes)
 await app.register(adminRoutes)
+// Sempre registradas, mesmo com a ranqueada desligada: sem pareador ninguém
+// cria lobby, então elas respondem vazio por conta própria. É o que deixa o
+// servidor dedicado seguir perguntando sem tomar 404 a cada 3 segundos.
 await app.register(rankedInternalRoutes)
-// Registra as rotas da fila E liga o laço de pareamento (RANKED_TICK_MS).
-await app.register(rankedRoutes)
+if (config.RANKED_ENABLED) {
+  // Registra as rotas da fila E liga o laço de pareamento (RANKED_TICK_MS).
+  await app.register(rankedRoutes)
+}
+// Fora do `if`: histórico e perfil são leitura do que já aconteceu, e desligar
+// a fila não pode apagar o passado nem quebrar a tela de Partidas.
+await app.register(matchesRoutes)
+// Upload/download de replay e statsJson. Registra num escopo próprio: o plugin
+// instala um parser de multipart que não pode vazar para as outras rotas.
+await app.register(replayRoutes)
+await app.register(reportsRoutes)
+// O socket que o launcher abre em `ranked_ws.rs` (`wss://.../ranked/tempo-real`).
+// Sem este registro o canal não existe e a falha é silenciosa: a tela cai no
+// poll e ninguém percebe que o tempo real nunca subiu.
+if (config.RANKED_ENABLED) {
+  await app.register(tempoRealRoutes)
+}
 
 app.get('/health', async () => {
   // Confirma que a API está de pé E que ela enxerga o banco — teste de fumaça
@@ -105,11 +127,25 @@ if (config.announceAllowedIps.length === 0) {
   app.log.warn('ANNOUNCE_ALLOWED_IPS vazio: qualquer origem pode anunciar servidor. Não use assim em produção.')
 }
 
-if (!config.RANKED_INTERNAL_SECRET) {
-  // Sem isto todo /internal/ranked/* responde 403, e o servidor dedicado não
-  // consegue nem reservar sala nem reportar resultado. Avisar aqui evita
-  // debugar isso no meio de uma noite de ranqueada.
-  app.log.warn('RANKED_INTERNAL_SECRET vazio: as rotas internas do ranqueado estão desligadas.')
+if (!config.RANKED_ENABLED) {
+  // Estado escolhido, não acidente — mas tem que aparecer no log, senão vira a
+  // próxima meia hora de "por que a fila não anda".
+  app.log.warn('RANKED_ENABLED=false: fila, pareamento e tempo real desligados.')
+} else if (!config.RANKED_SECRET_FILE && !process.env.RANKED_INTERNAL_SECRET) {
+  // Segredo aleatório em memória: as rotas internas existem mas nenhum
+  // gameserver sabe o segredo, então na prática estão fechadas. Só acontece
+  // fora do compose, que sempre define RANKED_SECRET_FILE.
+  app.log.warn(
+    'Sem RANKED_SECRET_FILE nem RANKED_INTERNAL_SECRET: segredo interno é aleatório desta subida, ' +
+      'e o servidor dedicado não conseguirá reservar sala nem reportar resultado.',
+  )
+}
+
+if (config.RANKED_ENABLED && (await seasons().countBy({ ativa: true })) === 0) {
+  // Ligar a ranqueada não cria temporada, e sem temporada aberta /ranked/me,
+  // /ranked/leaderboard e a entrada na fila respondem 503 para todo mundo.
+  // Nenhuma migration semeia uma — quem cria é o painel administrativo.
+  app.log.warn('Nenhuma temporada aberta: a fila ranqueada responde 503. Crie uma em /admin.')
 }
 
 if (!config.GAME_SERVER_PUBLIC_ADDRESS) {

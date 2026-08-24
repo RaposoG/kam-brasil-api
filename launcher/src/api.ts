@@ -296,6 +296,111 @@ export const rankedMe = (): Promise<RankedMe> => invoke('ranked_me')
 
 export const rankedLeaderboard = (): Promise<LeaderboardRow[]> => invoke('ranked_leaderboard')
 
+// --- tempo real da fila e do lobby ---
+
+/**
+ * O canal vive no Rust (`src-tauri/src/ranked_ws.rs`) porque é autenticado com
+ * o token de sessão. Aqui só chegam os eventos, no MESMO formato do poll — é o
+ * que permite a tela cair para o poll sem trocar de contrato no meio do lobby.
+ *
+ * `conexao` é o evento que diz à tela quando o poll de reserva precisa voltar.
+ */
+export type EventoRanqueado =
+  | ({ tipo: 'fila' } & QueueStatus)
+  | ({ tipo: 'lobby'; id: string } & LobbyView)
+  | { tipo: 'conexao'; ligado: boolean }
+
+/** Idempotente: chamar com o socket vivo não abre um segundo. */
+export const tempoRealStart = (): Promise<void> => invoke('ranked_ws_start')
+
+export const tempoRealStop = (): Promise<void> => invoke('ranked_ws_stop')
+
+export const onTempoReal = (handler: (e: EventoRanqueado) => void) =>
+  listen<EventoRanqueado>('ranked://tempo-real', (e) => handler(e.payload))
+
+// --- histórico de partidas e estatísticas (autenticados, via Rust) ---
+
+/** `pending` = sala reservada, partida ainda não reportada. `invalid` = desync. */
+export type StatusDaPartida = 'pending' | 'valid' | 'invalid'
+
+export interface JogadorNaPartida {
+  accountId: string | null
+  nickname: string
+  time: Team | null
+  wonOrLost: 'won' | 'lost' | 'none'
+  abandonou: boolean
+  /** Relatado pelo cliente, não pelo servidor dedicado. Só vem no relatório. */
+  stats?: Record<string, number>
+}
+
+export interface Partida {
+  id: string
+  mode: RankedMode
+  /** Falso = partida casual: entra no histórico, fora do rank. */
+  ranqueada: boolean
+  /** `nome` nulo é mapa fora do catálogo — o CRC sempre existe. */
+  mapa: { nome: string | null; crc: string }
+  iniciadoEm: string
+  encerradoEm: string | null
+  duracaoSeg: number | null
+  status: StatusDaPartida
+  invalidMotivo: string | null
+  timeVencedor: Team | null
+  jogadores: JogadorNaPartida[]
+  /** Só o CRC: o arquivo se baixa por `urlDoReplay`. */
+  replay: { crc: string } | null
+}
+
+export interface PaginaDePartidas {
+  partidas: Partida[]
+  /** ISO. `null` = acabou a rolagem. Vira o `before` da próxima página. */
+  proximoCursor: string | null
+}
+
+/**
+ * O que o perfil mostra. Não existe pontuação aqui — e se a API um dia mandar,
+ * esta camada não a declara e as telas não a leem.
+ */
+export interface EstatisticasDaConta {
+  accountId: string
+  nickname: string
+  partidas: number
+  vitorias: number
+  derrotas: number
+  /** 0–1. `null` = nenhuma partida decidida ainda; zero seria mentira. */
+  aproveitamento: number | null
+  mapasMaisJogados: { mapa: string; partidas: number }[]
+  ultimos10: ('V' | 'D')[]
+  tier: Tier | null
+}
+
+/** Sem `accountId` é o feed da comunidade; com ele, o histórico de uma conta. */
+export const historicoDePartidas = (
+  filtro: { accountId?: string; limit?: number; before?: string } = {},
+): Promise<PaginaDePartidas> =>
+  invoke('matches_history', {
+    accountId: filtro.accountId ?? null,
+    limit: filtro.limit ?? null,
+    before: filtro.before ?? null,
+  })
+
+export const estatisticasDaConta = (accountId: string): Promise<EstatisticasDaConta> =>
+  invoke('account_stats', { accountId })
+
+/**
+ * Sobe o par `.bas` + `.rpl` do save local `nome` para a partida.
+ *
+ * Isto é enriquecimento, nunca resultado: quem diz quem ganhou é o servidor
+ * dedicado. `jaExistia` = alguém do outro time já tinha mandado o mesmo replay.
+ */
+export const enviarReplay = (matchId: string, nome: string): Promise<{ crc: string; jaExistia: boolean }> =>
+  invoke('upload_replay', { matchId, nome })
+
+/** Rota pública: dá para abrir no navegador sem token nenhum. */
+export async function urlDoReplay(matchId: string, parte: 'rpl' | 'bas' = 'rpl'): Promise<string> {
+  return `${await apiBase()}/matches/${matchId}/replay?parte=${parte}`
+}
+
 // --- arquivos locais do jogo ---
 
 export interface ReplaySave {
@@ -315,6 +420,33 @@ export interface LocalMap {
 export const listReplays = (): Promise<ReplaySave[]> => invoke('list_replays')
 
 export const listLocalMaps = (): Promise<LocalMap[]> => invoke('list_local_maps')
+
+/** Um save escrito mais de 6h depois do início não é daquela partida. */
+const JANELA_DO_SAVE_MS = 6 * 60 * 60 * 1000
+
+/**
+ * De qual partida saiu este save — a ponte entre a pasta do jogo e a crônica.
+ *
+ * ponytail: casamento por janela de tempo porque não existe chave. O KaM nomeia
+ * o save pela data (`SavesMP/<data>/`), não pelo id da partida. No dia em que o
+ * servidor dedicado gravar o id no save, isto vira uma igualdade e a tela não
+ * muda uma linha.
+ */
+export function partidaDoSave(save: ReplaySave, partidas: readonly Partida[]): Partida | null {
+  // Save de campanha nunca é partida da crônica.
+  if (save.mode !== 'MP') return null
+
+  let melhor: Partida | null = null
+  for (const p of partidas) {
+    const inicio = Date.parse(p.iniciadoEm)
+    // O save é escrito durante ou depois da partida, nunca antes dela.
+    if (inicio > save.modifiedMs || save.modifiedMs - inicio > JANELA_DO_SAVE_MS) continue
+    // Empate não existe na prática, mas se houver fica a mais recente: é a que
+    // ainda estava rodando quando o arquivo foi escrito.
+    if (!melhor || inicio > Date.parse(melhor.iniciadoEm)) melhor = p
+  }
+  return melhor
+}
 
 // --- leituras públicas (fetch direto: sem token envolvido, a CSP libera o host) ---
 
@@ -341,7 +473,8 @@ export interface Season {
   number: number
   name: string
   startsAt: string
-  endsAt: string
+  /** `null` enquanto o admin não fechar a data de fim — a coluna é nullable. */
+  endsAt: string | null
   rewards: { nivel: string; nome: string }[]
 }
 

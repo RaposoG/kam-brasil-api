@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { resolverSegredoInterno } from './ranked-secret.ts'
+
 const schema = z.object({
   DATABASE_URL: z.string().min(1, 'DATABASE_URL não definida — copie brasil/.env.example para brasil/.env'),
 
@@ -95,6 +97,24 @@ const schema = z.object({
   VERIFY_ALLOWED_IPS: z.string().default('127.0.0.1'),
 
   /**
+   * Liga a ranqueada. Ligada por padrão: é recurso principal da plataforma, e
+   * exigir uma variável para ativar já custou uma noite de "por que a fila não
+   * anda" — o sintoma de desligada é idêntico ao de quebrada.
+   *
+   * `RANKED_ENABLED=false` desliga a fila, o pareador e o canal de tempo real.
+   * As rotas internas seguem registradas de propósito: sem pareador ninguém
+   * cria lobby, então `/internal/ranked/rooms` responde vazio por conta própria
+   * e o servidor dedicado continua perguntando sem tomar 404 a cada 3s.
+   *
+   * Histórico, replay e perfil continuam de pé: são leitura do que já
+   * aconteceu, e derrubá-los quebraria telas que nada têm a ver com a fila.
+   */
+  RANKED_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+
+  /**
    * Segredo compartilhado das rotas internas do ranqueado
    * (`/internal/ranked/*`), chamadas pelo servidor dedicado.
    *
@@ -104,6 +124,20 @@ const schema = z.object({
    * duas coisas.
    */
   RANKED_INTERNAL_SECRET: z.string().default(''),
+
+  /**
+   * Arquivo onde o segredo interno mora quando ninguém o definiu à mão.
+   *
+   * A API cria na primeira subida, com 32 bytes aleatórios, e o entrypoint do
+   * gameserver lê o mesmo arquivo — é assim que os dois lados combinam sem
+   * ninguém configurar nada. O volume é compartilhado só entre eles.
+   *
+   * Não reaproveitamos o JWT_SECRET para isto: este segredo viaja na
+   * querystring (o cliente HTTP do Pascal só faz GET) e querystring entra no
+   * log de acesso. Um segredo próprio vazado custa partidas falsas; o JWT
+   * vazado custa todas as contas.
+   */
+  RANKED_SECRET_FILE: z.string().default(''),
 
   /**
    * CRCs de executável aceitos em partida ranqueada, separados por vírgula
@@ -164,6 +198,10 @@ if (!parsed.success) {
 
 export const config = {
   ...parsed.data,
+  RANKED_INTERNAL_SECRET: resolverSegredoInterno(
+    parsed.data.RANKED_INTERNAL_SECRET,
+    parsed.data.RANKED_SECRET_FILE,
+  ),
   isDev: parsed.data.NODE_ENV === 'development',
   announceAllowedIps: parsed.data.ANNOUNCE_ALLOWED_IPS.split(',')
     .map((ip) => ip.trim())

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, onUnmounted, ref } from "vue";
+import { computed, inject, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   type Account,
   type LobbyView,
@@ -11,6 +11,7 @@ import {
   queueStatus,
   rotuloModo,
 } from "../api";
+import { useTempoReal } from "../tempo-real";
 
 /**
  * O lobby ranqueado: banimento alternado dos 10 mapas da temporada, sorteio
@@ -88,11 +89,28 @@ async function abrirJogo() {
   }
 }
 
+/** O que a tela faz com um lobby — venha ele do socket ou do poll. */
+function aplicar(novo: LobbyView) {
+  view.value = novo;
+  if (novo.estado === "launch" && novo.launch && !abriu) abrirJogo();
+}
+
+// Mesmo formato do poll, montado pela mesma vista no servidor. O evento `fila`
+// traz o `lobbyId` junto: reabrir o launcher no meio dos bans não depende do
+// poll ter respondido primeiro.
+const ligado = useTempoReal((e) => {
+  if (e.tipo === "fila") lobbyId.value = e.lobbyId ?? lobbyId.value;
+  else if (e.id === lobbyId.value) aplicar(e);
+});
+
+watch(ligado, (vivo) => {
+  if (!vivo) poll();
+});
+
 async function poll() {
   if (!lobbyId.value) return;
   try {
-    view.value = await lobbyFetch(lobbyId.value);
-    if (view.value.estado === "launch" && view.value.launch && !abriu) abrirJogo();
+    aplicar(await lobbyFetch(lobbyId.value));
   } catch (e) {
     // Mesmo trato do dock: queda de rede deixa o último estado conhecido na
     // tela em vez de apagar o lobby. E `erro` fica livre para o que o jogador
@@ -131,7 +149,8 @@ onMounted(async () => {
 
   tPoll = window.setInterval(() => {
     // Encerrado não muda mais: continuar batendo de 1,5 s seria poll por nada.
-    if (acabou.value) return;
+    // Com o socket de pé, também não: ele é o caminho rápido, o poll é a reserva.
+    if (acabou.value || ligado.value) return;
     poll();
   }, 1_500);
   tRelogio = window.setInterval(() => (agora.value = Date.now()), 1_000);

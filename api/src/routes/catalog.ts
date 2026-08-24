@@ -1,26 +1,50 @@
 import type { FastifyInstance } from 'fastify'
+import { seasons } from '../data-source.ts'
+import type { Season } from '../entities/season.ts'
 
 /**
- * Catálogo estático de temporada e conquistas.
+ * Catálogo da temporada e das conquistas.
  *
- * Constantes no código da API de propósito: mudar conteúdo aqui é um deploy da
- * API; mudar no launcher seria uma release assinada manual (as Actions estão
- * fora do ar). Sem tabela e sem progresso — progresso por jogador depende de
- * estatística que o jogo ainda não reporta (Fase 1b).
+ * Nome, número e datas vêm da tabela `seasons` — a mesma que a ranqueada lê.
+ * Eram duas verdades sobre a mesma coisa: o admin abria a "Temporada 2" no
+ * painel e esta tela continuava anunciando a 1.
+ *
+ * O que continua constante: as recompensas (não há coluna para elas) e as
+ * conquistas. Constante no código da API de propósito — mudar conteúdo aqui é
+ * um deploy da API; mudar no launcher seria uma release assinada na mão (as
+ * Actions estão fora do ar). Progresso por jogador depende de estatística que o
+ * jogo ainda não reporta (Fase 1b).
  */
 
-const SEASON = {
-  number: 1,
-  name: 'Primeiros Muros',
-  startsAt: '2026-09-01T00:00:00-03:00',
-  endsAt: '2026-11-30T23:59:59-03:00',
-  rewards: [
-    { nivel: '5', nome: 'Selo de temporada' },
-    { nivel: '10', nome: 'Moldura de perfil' },
-    { nivel: '20', nome: 'Estandarte do vale' },
-    { nivel: '35', nome: 'Título: Guardião' },
-    { nivel: '50', nome: 'Coroa da temporada' },
-  ],
+const RECOMPENSAS = [
+  { nivel: '5', nome: 'Selo de temporada' },
+  { nivel: '10', nome: 'Moldura de perfil' },
+  { nivel: '20', nome: 'Estandarte do vale' },
+  { nivel: '35', nome: 'Título: Guardião' },
+  { nivel: '50', nome: 'Coroa da temporada' },
+]
+
+/**
+ * A temporada no formato que o launcher lê.
+ *
+ * `endsAt` sai `null` enquanto o admin não fechar a data de fim — a coluna é
+ * nullable e o painel deixa criar temporada sem ela. Inventar uma data aqui
+ * faria a tela mostrar um "faltam N dias" que não existe, e uma contagem
+ * regressiva mentirosa é pior do que nenhuma.
+ *
+ * O launcher ainda não trata esse `null`: `Season.endsAt` é `string` em
+ * `launcher/src/api.ts` e `Temporada.vue` formata o campo sem guarda. Enquanto
+ * ninguém ajustar os dois, uma temporada sem data de fim aparece como
+ * "1 de janeiro" e "faltam 0 dias" na tela.
+ */
+function vistaDaTemporada(season: Season) {
+  return {
+    number: season.numero,
+    name: season.nome,
+    startsAt: season.inicioEm,
+    endsAt: season.fimEm,
+    rewards: RECOMPENSAS,
+  }
 }
 
 const ACHIEVEMENTS = [
@@ -76,7 +100,11 @@ const ACHIEVEMENTS = [
 
 export default async function catalogRoutes(app: FastifyInstance) {
   /** `season: null` é o formato para "sem temporada ativa" — o launcher trata. */
-  app.get('/seasons/current', async () => ({ season: SEASON }))
+  app.get('/seasons/current', async () => {
+    // A API sobe antes de existir temporada nenhuma: sem ativa é `null`, não erro.
+    const season = await seasons().findOne({ where: { ativa: true } })
+    return { season: season ? vistaDaTemporada(season) : null }
+  })
 
   app.get('/achievements', async () => ({ achievements: ACHIEVEMENTS }))
 }

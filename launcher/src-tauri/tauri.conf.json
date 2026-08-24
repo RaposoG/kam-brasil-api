@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://localhost:3000 https://kam-api.melhorzin.com"
+      "csp": "default-src 'self'; connect-src 'self' http://localhost:3000 https://kam-api.melhorzin.com ws://localhost:3000 wss://kam-api.melhorzin.com"
     }
   },
   "plugins": {

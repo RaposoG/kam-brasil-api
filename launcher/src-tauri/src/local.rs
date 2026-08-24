@@ -11,8 +11,10 @@ use serde::Serialize;
 
 use crate::install::game_dir;
 
-/// Um save do jogo. `has_replay` = existe o `.rpl` de mesmo nome
-/// (`EXT_SAVE_REPLAY` no KM_Defaults) — sem ele o botão "assistir" não serve.
+/// Um save do jogo. `has_replay` = a pasta tem `.rpl` **e** `.bas`
+/// (`EXT_SAVE_REPLAY`/`EXT_SAVE_BASE` no KM_Defaults). Os dois, não só o `.rpl`:
+/// é esta flag que libera o botão de enviar em `Replays.vue`, e `enviar_replay`
+/// sobe o par — com `.bas` faltando o botão apareceria só para falhar no envio.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReplayEntry {
@@ -42,30 +44,36 @@ fn modified_ms(meta: &std::fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
+/// Cada save é uma **pasta** `<dir>/<nome>/`, com `<nome>.sav`, `.rpl` e `.bas`
+/// dentro — `TKMSavesCollection.Path` (`src/res/KM_Saves.pas:563`) monta assim, e
+/// o próprio scanner do jogo (`:762-764`) procura o trio dentro do diretório.
+/// Varrer `*.sav` solto na raiz devolve lista vazia em toda instalação real.
 fn scan_saves(dir: &Path, mode: &str, out: &mut Vec<ReplayEntry>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
-        let path = entry.path();
-        let is_sav = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.eq_ignore_ascii_case("sav"))
-            .unwrap_or(false);
-        if !is_sav || !path.is_file() {
+        let pasta = entry.path();
+        if !pasta.is_dir() {
             continue;
         }
 
-        let Some(name) = path.file_stem().and_then(|s| s.to_str()) else { continue };
-        let meta = entry.metadata().ok();
+        let Some(name) = pasta.file_name().and_then(|s| s.to_str()) else { continue };
+
+        // O `.sav` é o que faz do diretório um save. Sem ele não há o que listar
+        // — é o caso do `SavesMP/basesave/`, que é estado interno da engine e
+        // não uma partida que o jogador salvou.
+        let sav = pasta.join(format!("{name}.sav"));
+        let Ok(meta) = std::fs::metadata(&sav) else { continue };
 
         out.push(ReplayEntry {
             name: name.to_string(),
             mode: mode.to_string(),
-            modified_ms: meta.as_ref().map(modified_ms).unwrap_or(0),
-            size_bytes: meta.as_ref().map(|m| m.len()).unwrap_or(0),
-            // with_extension aqui é o comportamento desejado: mesmo tronco,
-            // extensão trocada — exatamente como o jogo nomeia o par .sav/.rpl.
-            has_replay: path.with_extension("rpl").is_file(),
+            // Data e tamanho do `.sav`, não da pasta: a pasta muda de mtime por
+            // qualquer arquivo escrito dentro, e ordem por "save mais recente"
+            // é o que o jogador espera.
+            modified_ms: modified_ms(&meta),
+            size_bytes: meta.len(),
+            has_replay: pasta.join(format!("{name}.rpl")).is_file()
+                && pasta.join(format!("{name}.bas")).is_file(),
         });
     }
 }
@@ -137,6 +145,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&game);
     }
 
+    /// Monta um save no layout real do jogo: `<dir>/<nome>/<nome>.<ext>`.
+    fn gravar_save(dir: &Path, nome: &str, partes: &[(&str, &str)]) {
+        let pasta = dir.join(nome);
+        std::fs::create_dir_all(&pasta).unwrap();
+        for (ext, conteudo) in partes {
+            std::fs::write(pasta.join(format!("{nome}.{ext}")), conteudo).unwrap();
+        }
+    }
+
     #[test]
     fn saves_com_modo_replay_e_tamanho() {
         let game = temp_dir("saves");
@@ -145,25 +162,45 @@ mod tests {
         std::fs::create_dir_all(&sp).unwrap();
         std::fs::create_dir_all(&mp).unwrap();
 
-        std::fs::write(sp.join("campanha.sav"), "12345").unwrap();
-        std::fs::write(sp.join("campanha.rpl"), "r").unwrap();
-        std::fs::write(mp.join("partida.sav"), "abc").unwrap();
+        gravar_save(&sp, "campanha", &[("sav", "12345"), ("rpl", "r"), ("bas", "b")]);
+        gravar_save(&mp, "partida", &[("sav", "abc")]);
         // Lixo que não pode aparecer na lista.
         std::fs::write(sp.join("leiame.txt"), "x").unwrap();
-        std::fs::write(sp.join("orfao.rpl"), "r").unwrap();
+        // Save antigo no layout de arquivo solto: não é assim que o jogo grava.
+        std::fs::write(sp.join("solto.sav"), "x").unwrap();
+        // `basesave` é estado interno da engine — pasta sem `.sav`, não é partida.
+        gravar_save(&mp, "basesave", &[("bas", "b")]);
 
         let replays = replays_in(&game);
-        assert_eq!(replays.len(), 2, "só .sav conta: {replays:?}");
+        assert_eq!(replays.len(), 2, "só pasta com .sav conta: {replays:?}");
 
         let camp = replays.iter().find(|r| r.name == "campanha").unwrap();
         assert_eq!(camp.mode, "SP");
-        assert!(camp.has_replay, "tem .rpl de mesmo nome");
-        assert_eq!(camp.size_bytes, 5);
+        assert!(camp.has_replay, "tem o par .rpl + .bas");
+        assert_eq!(camp.size_bytes, 5, "tamanho é o do .sav, não o da pasta");
         assert!(camp.modified_ms > 0);
 
         let part = replays.iter().find(|r| r.name == "partida").unwrap();
         assert_eq!(part.mode, "MP");
-        assert!(!part.has_replay, "sem .rpl não tem replay");
+        assert!(!part.has_replay, "sem .rpl/.bas não dá para assistir nem enviar");
+
+        let _ = std::fs::remove_dir_all(&game);
+    }
+
+    #[test]
+    fn replay_exige_bas_alem_do_rpl() {
+        // O botão de enviar sai desta flag e `enviar_replay` sobe o par: marcar
+        // como pronto um save sem `.bas` ofereceria um envio que sempre falha.
+        let game = temp_dir("saves-bas");
+        let mp = game.join("SavesMP");
+        std::fs::create_dir_all(&mp).unwrap();
+
+        gravar_save(&mp, "so_rpl", &[("sav", "x"), ("rpl", "r")]);
+        gravar_save(&mp, "completo", &[("sav", "x"), ("rpl", "r"), ("bas", "b")]);
+
+        let replays = replays_in(&game);
+        assert!(!replays.iter().find(|r| r.name == "so_rpl").unwrap().has_replay);
+        assert!(replays.iter().find(|r| r.name == "completo").unwrap().has_replay);
 
         let _ = std::fs::remove_dir_all(&game);
     }
@@ -174,10 +211,10 @@ mod tests {
         let sp = game.join("Saves");
         std::fs::create_dir_all(&sp).unwrap();
 
-        std::fs::write(sp.join("antigo.sav"), "x").unwrap();
+        gravar_save(&sp, "antigo", &[("sav", "x")]);
         // Garante mtimes distintos mesmo em sistema de arquivos de resolução baixa.
         std::thread::sleep(std::time::Duration::from_millis(20));
-        std::fs::write(sp.join("recente.sav"), "x").unwrap();
+        gravar_save(&sp, "recente", &[("sav", "x")]);
 
         let nomes: Vec<_> = replays_in(&game).into_iter().map(|r| r.name).collect();
         assert_eq!(nomes, vec!["recente", "antigo"]);

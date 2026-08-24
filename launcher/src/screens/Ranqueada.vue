@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { type QueueStatus, type RankedMode, queueJoin, queueLeave, queueStatus, rotuloModo } from "../api";
+import { useTempoReal } from "../tempo-real";
 
 /**
  * A fila ranqueada.
@@ -53,16 +54,31 @@ const alguemNaFila = computed(() => MODOS.some((m) => naFila(m.id) > 0));
 // depois da partida — melhor um cartão com botão do que uma tela que não solta.
 let viEsperando = false;
 
+/** O que a tela faz com um estado de fila — venha ele do socket ou do poll. */
+function aplicar(novo: QueueStatus) {
+  if (novo.estado === "waiting") base = { seg: novo.esperaSeg, em: Date.now() };
+  // Enquanto ninguém mexeu na marcação, a tela reflete o que o servidor tem.
+  if (novo.estado !== "fora" && novo.modos.length) escolhidos.value = novo.modos;
+  status.value = novo;
+
+  if (novo.estado === "waiting") viEsperando = true;
+  else if (novo.estado === "matched" && novo.lobbyId && viEsperando) emit("ir", "lobby");
+}
+
+// O canal de tempo real entrega o MESMO formato do poll, de propósito: cair de
+// um para o outro não pode trocar o contrato no meio da fila.
+const ligado = useTempoReal((e) => {
+  if (e.tipo === "fila") aplicar(e);
+});
+
+// O socket caiu: consulta na hora em vez de esperar o próximo tique de 3 s.
+watch(ligado, (vivo) => {
+  if (!vivo) poll();
+});
+
 async function poll() {
   try {
-    const novo = await queueStatus();
-    if (novo.estado === "waiting") base = { seg: novo.esperaSeg, em: Date.now() };
-    // Enquanto ninguém mexeu na marcação, a tela reflete o que o servidor tem.
-    if (novo.estado !== "fora" && novo.modos.length) escolhidos.value = novo.modos;
-    status.value = novo;
-
-    if (novo.estado === "waiting") viEsperando = true;
-    else if (novo.estado === "matched" && novo.lobbyId && viEsperando) emit("ir", "lobby");
+    aplicar(await queueStatus());
   } catch (e) {
     // Sem rede fica o último estado conhecido — o mesmo trato do dock. Só a
     // primeira carga fala, senão o poll de 3 s apagaria o erro de uma ação.
@@ -105,8 +121,10 @@ let tRelogio = 0;
 
 onMounted(() => {
   poll();
+  // O poll não morre, vira reserva: com o socket de pé ele fica calado, e volta
+  // sozinho no instante em que a conexão cair.
   tPoll = window.setInterval(() => {
-    if (!ocupado.value) poll();
+    if (!ocupado.value && !ligado.value) poll();
   }, 3_000);
   tRelogio = window.setInterval(() => (agora.value = Date.now()), 1_000);
 });
