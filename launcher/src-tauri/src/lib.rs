@@ -5,12 +5,20 @@ mod install;
 mod local;
 mod original;
 mod speech;
+mod webview2;
 mod social;
 
 use auth::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Sem WebView2 o Tauri nao consegue criar a janela e morre com uma mensagem
+    // que nao ajuda ninguem. Detectamos antes e explicamos o que fazer.
+    if !webview2::instalado() {
+        webview2::avisar(webview2::RECADO);
+        std::process::exit(1);
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
