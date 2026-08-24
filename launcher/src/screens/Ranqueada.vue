@@ -2,6 +2,9 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { type QueueStatus, type RankedMode, queueJoin, queueLeave, queueStatus, rotuloModo } from "../api";
 import { useTempoReal } from "../tempo-real";
+// `statusInstalacao` e nao `status`: esta tela ja tem um `status`, que e o da
+// fila. Dois "status" no mesmo arquivo seria confusao garantida.
+import { impedimentoParaFila, launcherNova, status as statusInstalacao } from "../install";
 
 /**
  * A fila ranqueada.
@@ -113,6 +116,12 @@ function alternar(modo: RankedMode) {
   if (esperando.value) mudar(() => queueJoin(marcados));
 }
 
+const impedimento = computed(() =>
+  impedimentoParaFila(statusInstalacao.value.acao, launcherNova.value),
+);
+
+const jogoPronto = computed(() => impedimento.value === "");
+
 const entrar = () => mudar(() => queueJoin(escolhidos.value));
 const sair = () => mudar(() => queueLeave());
 
@@ -191,12 +200,20 @@ onUnmounted(() => {
         <div class="acao-texto">
           <div class="acao-titulo">Pronto para a batalha?</div>
           <p class="acao-sub">
-            {{ alguemNaFila ? "Já tem gente esperando." : "Ninguém na fila agora." }}
-            Você é pareado com quem está por perto no rank, nunca com mais de dois tiers de
-            diferença.
+            <template v-if="jogoPronto">
+              {{ alguemNaFila ? "Já tem gente esperando." : "Ninguém na fila agora." }}
+              Você é pareado com quem está por perto no rank, nunca com mais de dois tiers de
+              diferença.
+            </template>
+            <template v-else>{{ impedimento }}</template>
           </p>
         </div>
-        <button class="btn-ouro" :disabled="ocupado || !escolhidos.length" @click="entrar">
+        <button
+          class="btn-ouro"
+          :disabled="ocupado || !escolhidos.length || !jogoPronto"
+          :title="impedimento"
+          @click="entrar"
+        >
           ENTRAR NA FILA
         </button>
       </template>

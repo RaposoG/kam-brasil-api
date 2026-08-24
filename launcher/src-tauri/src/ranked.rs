@@ -30,9 +30,27 @@ pub async fn ranked_queue_join(
     state: State<'_, AppState>,
     modes: Vec<String>,
 ) -> Result<Value, String> {
-    // Reenviar com os modos novos é como se troca de modo sem perder a espera
-    // acumulada — a API atualiza a entrada em vez de criar outra.
-    pedir(&state, Method::POST, "/ranked/queue", Some(json!({ "modes": modes }))).await
+    // As versões vão junto porque a API recusa quem está desatualizado: numa
+    // ranqueada, versão diferente entre jogadores é desync, e desync é rating
+    // perdido de quem não fez nada errado.
+    //
+    // A do jogo sai da instalação, não de uma variável de tela: é o que o
+    // jogador vai REALMENTE abrir. A do launcher é a compilada neste binário.
+    let game_version = crate::install::read_installed(&crate::install::game_dir())
+        .map(|i| i.version)
+        .unwrap_or_default();
+
+    pedir(
+        &state,
+        Method::POST,
+        "/ranked/queue",
+        Some(json!({
+            "modes": modes,
+            "gameVersion": game_version,
+            "launcherVersion": env!("CARGO_PKG_VERSION"),
+        })),
+    )
+    .await
 }
 
 #[tauri::command]

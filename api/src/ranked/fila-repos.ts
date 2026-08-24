@@ -12,6 +12,7 @@
  * arquivo de teste é o preço.
  */
 export {
+  clientReleases,
   dataSource,
   gameServers,
   lobbies,

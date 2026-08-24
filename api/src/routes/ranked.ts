@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { config } from '../config.ts'
 // Repositórios pela indireção de ranked/fila-repos.ts — ver o comentário lá.
 import {
+  clientReleases,
   dataSource,
   gameServers,
   lobbies,
@@ -48,7 +49,19 @@ const UNIQUE_VIOLATION = '23505'
 const NAO_ENCONTRADO = { erro: 404, motivo: 'lobby não encontrado' }
 
 const modoSchema = z.enum(['1v1', '2v2', '3v3', '4v4'])
-const entrarSchema = z.object({ modes: z.array(modoSchema).min(1).max(4) })
+const entrarSchema = z.object({
+  modes: z.array(modoSchema).min(1).max(4),
+  /**
+   * Versão do jogo e do launcher que o jogador está rodando.
+   *
+   * Opcionais para não quebrar um launcher antigo no dia do deploy — mas quem
+   * não manda a do jogo é recusado logo abaixo: numa ranqueada, versão diferente
+   * entre jogadores é desync, e desync é rating perdido de gente que não fez
+   * nada errado.
+   */
+  gameVersion: z.string().max(32).optional(),
+  launcherVersion: z.string().max(32).optional(),
+})
 const idParamSchema = z.object({ id: z.uuid() })
 const banSchema = z.object({ mapId: z.uuid() })
 
@@ -694,6 +707,18 @@ export default async function rankedRoutes(app: FastifyInstance, opcoes: OpcoesR
 
     const season = await temporadaAtiva()
     if (!season) return reply.code(503).send({ error: 'nenhuma temporada aberta' })
+
+    // Versão do jogo: a API é dona dessa verdade, então ela decide. O launcher
+    // já bloqueia o botão, mas bloqueio de tela é acordo, não regra -- e o custo
+    // de deixar passar não é do trapaceiro, é do adversário dele.
+    const releaseAtual = await clientReleases().findOne({ where: { published: true }, order: { createdAt: 'DESC' } })
+    if (releaseAtual && parsed.data.gameVersion !== releaseAtual.version) {
+      return reply.code(409).send({
+        error: `atualize o jogo para a versão ${releaseAtual.version} antes de entrar na fila`,
+        versaoEsperada: releaseAtual.version,
+        versaoEnviada: parsed.data.gameVersion ?? null,
+      })
+    }
 
     const conta = request.account
     if (conta.queueBanUntil && conta.queueBanUntil > new Date()) {

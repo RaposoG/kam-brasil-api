@@ -193,6 +193,44 @@ export const rotuloAcao = computed(() => {
   }
 });
 
+/**
+ * Por que este jogador não pode entrar na fila ranqueada. Vazio = pode.
+ *
+ * Entrar na fila exige o MESMO que abrir o jogo exige. Sem isso o jogador é
+ * pareado sem o jogo pronto e a partida trava para o adversário também — que
+ * fez tudo certo e fica esperando alguém que não consegue abrir. Um botão
+ * desabilitado é barato; uma sala perdida com outra pessoa dentro, não.
+ *
+ * Mora aqui, e não na tela da ranqueada, para não existirem duas definições de
+ * "pronto" que possam discordar.
+ */
+export function impedimentoParaFila(acao: Acao, versaoNovaDoLauncher: string | null = null): string {
+  // Launcher velho barra ANTES de tudo: quem está com o launcher desatualizado
+  // pode estar sem uma correção que muda o protocolo da ranqueada, e o sintoma
+  // apareceria como partida travada para os dois, não como "atualize".
+  //
+  // Vale para o jogo também, por outro caminho: jogo desatualizado vira
+  // `needsUpdate`, que a máquina de estados acima já traduz em `instalar`.
+  // Versão diferente entre jogadores é desync, e desync em ranqueada é rating
+  // perdido de gente que não fez nada errado.
+  if (versaoNovaDoLauncher)
+    return `Atualize o launcher para a versão ${versaoNovaDoLauncher} antes de entrar na fila — a aba JOGAR tem o botão.`;
+
+  switch (acao) {
+    case "jogar":
+      return "";
+    case "original":
+      return "Encontre o Knights and Merchants original na aba JOGAR antes de entrar na fila.";
+    case "instalar":
+    case "semVersao":
+      return "Instale ou atualize o jogo na aba JOGAR antes de entrar na fila.";
+    case "preparar":
+      return "Prepare os arquivos do jogo na aba JOGAR antes de entrar na fila.";
+    case "esperar":
+      return "Aguarde o jogo terminar de preparar — a aba JOGAR mostra o progresso.";
+  }
+}
+
 export const versaoInstalada = computed(() => check.value?.installedVersion ?? null);
 export const pastaJogo = computed(() => check.value?.path ?? "");
 

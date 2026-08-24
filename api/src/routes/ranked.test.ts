@@ -35,6 +35,9 @@ const POOL = Array.from({ length: 10 }, (_, i) => ({
 }))
 const POOL_IDS = POOL.map((m) => m.id)
 
+/** A release publicada que a fila exige. Cada teste ajusta se precisar. */
+let releasePublicada: unknown[] = [{ version: '9.9.9', published: true, createdAt: new Date() }]
+
 /** Números distintos de qualquer outro campo: se aparecerem na resposta, vazou. */
 const MU = 26.123456
 const SIGMA = 3.987654
@@ -128,6 +131,9 @@ await mock.module('../ranked/fila-repos.ts', () => ({
   seasons: () => repoFake([{ id: SEASON_ID, ativa: true }]),
   playerRatings: () => repoFake([RATING, RATING_RIVAL]),
   queueEntries: () => repoFake(),
+  // A fila recusa quem esta com o jogo desatualizado; este duble e a "versao
+  // publicada" contra a qual ela compara.
+  clientReleases: () => repoFake(releasePublicada),
   lobbies: () => ({
     ...repoFake(),
     findOne: async () => lobbyAtual,
@@ -568,4 +574,28 @@ test('sem RANKED_SERVER_PORT a reserva aceita qualquer dedicado — quem roda um
   expect(buscasDeServidor[0]!.where).toMatchObject({ dedicated: true })
   expect(buscasDeServidor[0]!.where).not.toHaveProperty('port')
   expect(avisos.join('\n')).not.toContain('RANKED_SERVER_PORT')
+})
+
+
+test('a fila recusa quem está com o jogo desatualizado', async () => {
+  // Bloqueio de tela é acordo, não regra: um cliente modificado passa por cima.
+  // E o custo de deixar passar não é do trapaceiro — é do adversário dele, que
+  // perde a partida por desync sem ter feito nada.
+  releasePublicada = [{ version: '1.2.3', published: true, createdAt: new Date() }]
+  const app = buildApp()
+
+  const velho = await app.inject({
+    method: 'POST',
+    url: '/ranked/queue',
+    payload: { modes: ['1v1'], gameVersion: '1.2.2' },
+  })
+  expect(velho.statusCode).toBe(409)
+  expect(velho.json().error).toContain('1.2.3')
+
+  const semVersao = await app.inject({
+    method: 'POST',
+    url: '/ranked/queue',
+    payload: { modes: ['1v1'] },
+  })
+  expect(semVersao.statusCode).toBe(409)
 })
