@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { hash, verify } from '@node-rs/argon2'
 import { z } from 'zod'
-import { config } from '../config.ts'
+import { config, isAdminEmail } from '../config.ts'
 import { accounts, sessions } from '../data-source.ts'
 import { toPublicAccount } from '../entities/account.ts'
 
@@ -39,7 +39,15 @@ export default async function authRoutes(app: FastifyInstance) {
     const email = parsed.data.email.toLowerCase()
 
     const passwordHash = await hash(password)
-    const account = accounts().create({ email, nickname, passwordHash, lastLoginAt: null })
+    const account = accounts().create({
+      email,
+      nickname,
+      passwordHash,
+      lastLoginAt: null,
+      // O papel é derivado de ADMIN_EMAILS, aqui e no login. O dono cria a
+      // conta dele pelo launcher como qualquer jogador e já entra promovido.
+      isAdmin: isAdminEmail(email),
+    })
 
     try {
       await accounts().save(account)
@@ -89,6 +97,10 @@ export default async function authRoutes(app: FastifyInstance) {
     )
 
     account.lastLoginAt = new Date()
+    // Reavaliado a cada login, e não só no registro: tirar um e-mail de
+    // ADMIN_EMAILS tem que revogar o painel no próximo login, sem SQL na mão.
+    // Vem de graça — este save já ia acontecer pelo lastLoginAt.
+    account.isAdmin = isAdminEmail(account.email)
     await accounts().save(account)
 
     const token = app.jwt.sign({ sub: account.id, jti: session.id }, { expiresIn: `${config.SESSION_TTL_DAYS}d` })

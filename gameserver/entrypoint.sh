@@ -19,6 +19,12 @@ set -eu
 : "${AUTH_VERIFY_URL:=http://127.0.0.1:3000/auth/verify}"
 : "${REQUIRE_AUTH:=1}"
 
+# Salas ranqueadas. Vazio desliga o recurso inteiro: o servidor nem consulta a
+# fila. Fica assim por padrão de propósito — sem o segredo configurado, um
+# polling a cada 5s só produziria 401 no log.
+: "${RANKED_URL:=}"
+: "${RANKED_SECRET:=}"
+
 cat > "/app/KaM Remake Server Settings.ini" <<INI
 [Server]
 ServerName=${SERVER_NAME}
@@ -37,6 +43,11 @@ UDPAnnounce=0
 ; Sem isto qualquer cliente entra com o nickname que quiser.
 KamBrasilRequireAuth=${REQUIRE_AUTH}
 KamBrasilAuthVerifyUrl=${AUTH_VERIFY_URL}
+
+; Base das rotas internas de ranqueada (o servidor acrescenta /rooms, /started
+; e /report). Vazio = servidor comum, sem reservas.
+KamBrasilRankedUrl=${RANKED_URL}
+KamBrasilRankedSecret=${RANKED_SECRET}
 INI
 
 echo "kam-brasil: servidor \"${SERVER_NAME}\" na porta ${SERVER_PORT}, anunciando em ${MASTER_SERVER_URL}"

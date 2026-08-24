@@ -48,16 +48,23 @@ WORKDIR /src/Utils/DedicatedServer
 # "unit não encontrada" por vez. `unused` fica de fora de propósito — tem um
 # `KM_PerfLog.pas` que sombrearia o de `src/perflog/`.
 #
-# Sem nenhum `-d`: o RNG spy virou opt-in no KaM_Remake.inc, e era ele que
-# impedia o FPC — puxava KM_RandomChecks → KM_GameSettings, cheio de inline vars
-# do Delphi 10.3+. Se voltar a ser preciso desligar algo, o flag vem neste RUN.
+# O RNG spy virou opt-in no KaM_Remake.inc, e era ele que impedia o FPC —
+# puxava KM_RandomChecks → KM_GameSettings, cheio de inline vars do Delphi
+# 10.3+. Por isso não há `-dNO_RNG_SPY` aqui.
+#
+# `-dNET_ROOM_HEADLESS` é o que deixa o servidor linkar KM_NetRoom — a lista de
+# jogadores da sala, que ele precisa para montar e conferir o mkPlayersList de
+# uma partida ranqueada. Sem o define, a mesma unit arrasta KM_Hand e
+# KM_ResLocales atrás, ou seja, a simulação e a pilha gráfica inteiras, que não
+# compilam com FPC. O define é só para este build: o cliente Delphi continua
+# compilando a versão completa.
 RUN NOGUI=$(dirname "$(find /usr/lib/lazarus -name interfaces.ppu -path '*/nogui/*' | head -1)") \
  && LCL=$(dirname "$NOGUI") \
  && LAZUTILS=$(dirname "$(find /usr/lib/lazarus -name lazutf8.ppu | head -1)") \
  && echo "LCL em $LCL, lazutils em $LAZUTILS" \
  && SRC="-Fi../.. -Fu../.." \
  && for d in $(find ../../src -type d -not -path '*/unused*'); do SRC="$SRC -Fi$d -Fu$d"; done \
- && fpc -Px86_64 -Mdelphi -O3 \
+ && fpc -Px86_64 -Mdelphi -O3 -dNET_ROOM_HEADLESS \
       -Fu$NOGUI -Fu$LCL -Fu$LAZUTILS \
       $SRC \
       -oKaM_DedicatedServer \

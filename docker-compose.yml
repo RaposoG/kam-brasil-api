@@ -48,6 +48,9 @@ services:
       SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-30}
       PLAY_TICKET_TTL_MINUTES: ${PLAY_TICKET_TTL_MINUTES:-720}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      # Quem tem o painel administrativo. Concedido no deploy de proposito: o
+      # acesso fica versionado e auditavel, sem SQL na mao. Vazio = ninguem.
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       MOTD: ${MOTD:-Bem-vindo ao Kam Brasil!}
       # Atras de nginx/Cloudflare tem que ser true, senao request.ip devolve o IP
       # do proxy e os allowlists abaixo viram enfeite.
@@ -57,6 +60,18 @@ services:
       # X-Forwarded-For -- senao qualquer um se passaria por interno.
       ANNOUNCE_ALLOWED_IPS: ${ANNOUNCE_ALLOWED_IPS:-127.0.0.1}
       VERIFY_ALLOWED_IPS: ${VERIFY_ALLOWED_IPS:-127.0.0.1}
+      # Ranqueada. O mesmo segredo tem que chegar aos dois lados: a API o exige
+      # em /internal/ranked/*, e o gameserver o manda na querystring. Vazio nos
+      # dois = ranqueada desligada, e e o padrao seguro -- mas metade preenchida
+      # e o pior dos mundos: o servidor pergunta e leva 403 a cada 3s.
+      RANKED_INTERNAL_SECRET: ${RANKED_INTERNAL_SECRET:-}
+      RANKED_ALLOWED_EXE_CRCS: ${RANKED_ALLOWED_EXE_CRCS:-}
+      RANKED_TICK_MS: ${RANKED_TICK_MS:-3000}
+      RANKED_BAN_TURNO_SEG: ${RANKED_BAN_TURNO_SEG:-25}
+      # Bloco de salas reservado para o ranqueado. Tem que caber no MAX_ROOMS do
+      # gameserver, la embaixo: indice fora do maximo e sala que nao existe.
+      RANKED_ROOM_FIRST: ${RANKED_ROOM_FIRST:-8}
+      RANKED_ROOM_COUNT: ${RANKED_ROOM_COUNT:-8}
       # Endereco que vai para a lista de servidores. Sem ele os jogadores
       # recebem o IP interno do container e nao conectam em nada -- mas a API
       # sobe assim mesmo, e avisa no log.
@@ -139,6 +154,15 @@ services:
       AUTH_VERIFY_URL: http://127.0.0.1:3000/auth/verify
       # 1 = so entra quem passou pelo launcher, com o nickname da conta.
       REQUIRE_AUTH: ${REQUIRE_AUTH:-1}
+      # Base das rotas internas da ranqueada -- o servidor acrescenta /rooms,
+      # /started e /report. Loopback pelo mesmo motivo do AUTH_VERIFY_URL: o
+      # segredo vai na querystring, em texto claro, e nao pode sair da maquina.
+      #
+      # Vazio desliga: o servidor nem consulta a fila. Com RANKED_INTERNAL_SECRET
+      # definido no .env os dois lados ligam juntos, que e o unico jeito de isso
+      # funcionar -- um lado so produz 403 a cada 3s.
+      RANKED_URL: ${RANKED_INTERNAL_SECRET:+http://127.0.0.1:3000/internal/ranked}
+      RANKED_SECRET: ${RANKED_INTERNAL_SECRET:-}
 
 volumes:
   postgres-data:

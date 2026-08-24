@@ -14,6 +14,9 @@ import statsRoutes from './routes/stats.ts'
 import newsRoutes from './routes/news.ts'
 import socialRoutes from './routes/social.ts'
 import catalogRoutes from './routes/catalog.ts'
+import adminRoutes from './routes/admin.ts'
+import rankedInternalRoutes from './routes/ranked-internal.ts'
+import rankedRoutes from './routes/ranked.ts'
 
 const app = Fastify({
   trustProxy: config.TRUST_PROXY,
@@ -64,6 +67,10 @@ await app.register(statsRoutes)
 await app.register(newsRoutes)
 await app.register(socialRoutes)
 await app.register(catalogRoutes)
+await app.register(adminRoutes)
+await app.register(rankedInternalRoutes)
+// Registra as rotas da fila E liga o laço de pareamento (RANKED_TICK_MS).
+await app.register(rankedRoutes)
 
 app.get('/health', async () => {
   // Confirma que a API está de pé E que ela enxerga o banco — teste de fumaça
@@ -88,8 +95,21 @@ if (executed.length > 0) {
   app.log.info({ migrations: executed.map((m) => m.name) }, 'migrations aplicadas')
 }
 
+if (config.adminEmails.length === 0) {
+  // Sem isto, o painel responde 403 para todo mundo e ninguém entende por quê:
+  // o sintoma (403) não sugere em nada que a variável é que está vazia.
+  app.log.warn('ADMIN_EMAILS vazio: ninguém tem acesso ao painel administrativo.')
+}
+
 if (config.announceAllowedIps.length === 0) {
   app.log.warn('ANNOUNCE_ALLOWED_IPS vazio: qualquer origem pode anunciar servidor. Não use assim em produção.')
+}
+
+if (!config.RANKED_INTERNAL_SECRET) {
+  // Sem isto todo /internal/ranked/* responde 403, e o servidor dedicado não
+  // consegue nem reservar sala nem reportar resultado. Avisar aqui evita
+  // debugar isso no meio de uma noite de ranqueada.
+  app.log.warn('RANKED_INTERNAL_SECRET vazio: as rotas internas do ranqueado estão desligadas.')
 }
 
 if (!config.GAME_SERVER_PUBLIC_ADDRESS) {

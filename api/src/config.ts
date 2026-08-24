@@ -54,6 +54,19 @@ const schema = z.object({
    */
   ADMIN_TOKEN: z.string().default(''),
 
+  /**
+   * E-mails com acesso ao painel administrativo, separados por vírgula.
+   *
+   * O papel vem daqui e não de um UPDATE no banco: assim conceder e revogar
+   * acesso é uma mudança versionada no deploy, auditável, e não depende de
+   * alguém lembrar de rodar SQL na mão numa madrugada. A conta precisa existir
+   * — o admin se registra pelo launcher como qualquer jogador, e o e-mail
+   * casando aqui é o que o promove no próximo login.
+   *
+   * Vazio = ninguém é admin, e o painel inteiro responde 403. É o padrão seguro.
+   */
+  ADMIN_EMAILS: z.string().default(''),
+
   /** Pasta com os binários das releases, servida em /downloads/. */
   RELEASES_DIR: z.string().default('./releases'),
 
@@ -82,6 +95,56 @@ const schema = z.object({
   VERIFY_ALLOWED_IPS: z.string().default('127.0.0.1'),
 
   /**
+   * Segredo compartilhado das rotas internas do ranqueado
+   * (`/internal/ranked/*`), chamadas pelo servidor dedicado.
+   *
+   * Vazio desliga as rotas — padrão seguro, igual ao ADMIN_TOKEN: sem isso
+   * configurado, ninguém reporta resultado. O allowlist de IP dessas rotas é o
+   * mesmo VERIFY_ALLOWED_IPS: é o mesmo binário, na mesma máquina, chamando as
+   * duas coisas.
+   */
+  RANKED_INTERNAL_SECRET: z.string().default(''),
+
+  /**
+   * CRCs de executável aceitos em partida ranqueada, separados por vírgula
+   * (`/internal/ranked/build`). Vazio = aceita qualquer build; só use assim em
+   * desenvolvimento.
+   *
+   * É obstáculo, não segurança — um cliente modificado mente o CRC. Serve para
+   * pegar build divergente na comunidade, que é a causa real de desync neste
+   * fork (ALLOW_MP_MODS = True).
+   */
+  RANKED_ALLOWED_EXE_CRCS: z.string().default(''),
+
+  /**
+   * Intervalo do laço que pareia a fila e cobra os turnos de ban vencidos.
+   *
+   * 0 desliga o laço — é assim que um processo que não deve rodar matchmaking
+   * (script, migração, um segundo nó) sobe sem duplicar partida.
+   */
+  RANKED_TICK_MS: z.coerce.number().int().nonnegative().default(3_000),
+
+  /**
+   * Prazo de cada turno de ban. Estourou, o sistema bane pelo time que não
+   * votou: um jogador ausente não pode travar a partida dos outros sete.
+   */
+  RANKED_BAN_TURNO_SEG: z.coerce.number().int().positive().default(25),
+
+  /**
+   * Bloco de salas do servidor dedicado reservado para o ranqueado.
+   *
+   * O protocolo do KaM não sabe criar sala por nome: sala é índice, e quem
+   * entra primeiro vira host. Então a API é dona da alocação — reserva um
+   * bloco e nunca entrega o mesmo índice a dois lobbies vivos.
+   *
+   * O padrão é a metade de cima do `MAX_ROOMS=16` do gameserver: as salas 0–7
+   * seguem livres para partida casual. Mexer aqui exige mexer no MAX_ROOMS
+   * junto — um índice fora do máximo é sala que não existe.
+   */
+  RANKED_ROOM_FIRST: z.coerce.number().int().nonnegative().default(8),
+  RANKED_ROOM_COUNT: z.coerce.number().int().positive().default(8),
+
+  /**
    * Ligue em produção quando a API estiver atrás de nginx/Cloudflare.
    * Sem isso, request.ip devolve o IP do proxy — e o ANNOUNCE_ALLOWED_IPS
    * passaria a comparar sempre contra o mesmo endereço, virando inútil.
@@ -108,4 +171,19 @@ export const config = {
   verifyAllowedIps: parsed.data.VERIFY_ALLOWED_IPS.split(',')
     .map((ip) => ip.trim())
     .filter(Boolean),
+  adminEmails: parsed.data.ADMIN_EMAILS.split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean),
+  rankedAllowedExeCrcs: parsed.data.RANKED_ALLOWED_EXE_CRCS.split(',')
+    .map((crc) => crc.trim().toUpperCase())
+    .filter(Boolean),
+}
+
+/**
+ * O e-mail está na allowlist do painel? Comparação em minúsculas dos dois lados
+ * porque `accounts.email` é sempre gravado assim (ver routes/auth.ts) e ninguém
+ * deve perder o acesso por ter digitado o `.env` com maiúscula.
+ */
+export function isAdminEmail(email: string): boolean {
+  return config.adminEmails.includes(email.trim().toLowerCase())
 }
