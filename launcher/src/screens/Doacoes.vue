@@ -70,7 +70,9 @@ async function copiar() {
 </script>
 
 <template>
-  <div class="doacoes">
+  <!-- `tela` é a margem que todas as outras telas usam (theme.css). Sem ela,
+       esta ficava colada na borda esquerda. -->
+  <div class="tela doacoes">
     <header class="cabeca">
       <h2>Ajude o Kam Brasil a continuar</h2>
       <p>
