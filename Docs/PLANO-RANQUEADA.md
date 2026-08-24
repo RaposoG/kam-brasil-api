@@ -706,3 +706,70 @@ Melhor precisão do estado da arte (usa duração de partida, estatísticas indi
 
 Como você vai gravar `mu_before`/`mu_after`/`mode` em toda partida (ver `parametros`), **ao fim da primeira temporada dá para reprocessar o histórico inteiro com qualquer um desses sistemas e comparar acurácia de predição real** (log-loss em `predictWin` contra os resultados). É a única forma honesta de decidir se algum knob vale a pena. Trocar de sistema antes de ter essa temporada é chute com passos extras.
 
+
+---
+
+# Decisões do dono — sobrepõem o que está acima
+
+Registradas em conversa. Onde conflitarem com o plano original, **estas valem**.
+
+## 1. O servidor dedicado decide, sempre
+
+Confirmado. O resultado nunca vem do cliente. O servidor observa e decide, inclusive
+em desconexão e abandono. Isso está alinhado com a Fase 0.
+
+## 2. Todos os modos entram: 1x1, 2x2, 3x3 e 4x4
+
+**Sobrepõe** a decisão de adiar 3x3 e 4x4. O dono vai trazer mais gente; o sistema tem
+que estar pronto quando isso acontecer. A fila mostra quantos estão aguardando em cada
+modo, para que um modo vazio seja informação e não frustração.
+
+## 3. Abandono: 3 minutos, punição escalonada, perdão em 15 dias
+
+Regra fechada:
+
+- Sair da partida e **não voltar em 3 minutos** → expulso e punido.
+- A punição **escala** a cada reincidência.
+- **15 dias sem nenhuma ocorrência zeram o histórico** — o jogador volta ao estado de
+  quem nunca abandonou. Não é o abandono que expira um a um: é a ficha inteira que é
+  perdoada após 15 dias limpos.
+
+Escalonamento (suspensão da fila ranqueada, não do jogo):
+
+| Ocorrência dentro da janela | Suspensão |
+|---|---|
+| 1ª | 15 minutos |
+| 2ª | 1 hora |
+| 3ª | 6 horas |
+| 4ª | 24 horas |
+| 5ª ou mais | 7 dias |
+
+A partida abandonada conta como **derrota** para quem saiu e **vitória** para o outro time.
+Reconexão dentro dos 3 minutos não gera punição nem altera o resultado.
+
+## 4. WebSocket, não polling
+
+**Sobrepõe** a decisão de usar polling. Fila e lobby de bans usam WebSocket. Implica
+ajustar a CSP do Tauri para permitir `ws:`/`wss:` no host da API.
+
+## 5. Anti-cheat manual
+
+Confirmado: replay + denúncia + análise do dono. Sem detecção automática.
+
+## 6. Painel administrativo
+
+Conta administradora: **tano.tano12377@gmail.com**.
+
+O papel de admin é concedido por variável de ambiente (`ADMIN_EMAILS`), não por edição
+direta no banco: assim o acesso é auditável no deploy e não depende de alguém lembrar de
+rodar um SQL. A conta precisa existir — o dono a cria pelo launcher normalmente.
+
+O painel precisa, no mínimo:
+
+- **Mapas da temporada** — escolher os 10 mapas, por temporada
+- **Temporadas** — abrir, fechar, definir início e fim
+- **Jogadores** — ver rank e pontuação **reais** (o admin vê os pontos que o jogador não vê),
+  histórico, ocorrências de abandono
+- **Punições** — aplicar, remover e ajustar suspensões manualmente
+- **Denúncias** — fila de denúncias com link para o replay da partida
+- **Partidas** — inspecionar qualquer partida, com o relatório completo
