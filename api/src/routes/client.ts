@@ -45,9 +45,13 @@ const EXCLUDED_PREFIXES = [
   '.git/',
 ]
 
+// houses.dat e unit.dat NAO estao mais aqui.
+//
+// Ficaram de fora enquanto vinham da copia original de cada jogador. So que sao
+// regras de simulacao: com edicoes diferentes do KaM, cada um simulava
+// diferente e as partidas desincronizavam no meio. Agora vem da release, iguais
+// para todos, e por isso PRECISAM entrar no manifesto.
 const EXCLUDED_FILES = [
-  'data/defines/houses.dat', // do jogo original
-  'data/defines/unit.dat', // do jogo original
   'kambrasil.json', // marcador de versao instalada, e local
 ]
 
