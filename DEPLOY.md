@@ -35,35 +35,95 @@ Monte um volume e aponte `RELEASES_DIR` para ele.
 Rodam sozinhas no boot. Um deploy nunca sobe com schema defasado, e não há passo
 manual entre o push e a API no ar.
 
-## O servidor de jogo sobe junto
+## Os dois servidores de jogo sobem junto
 
-O serviço `gameserver` do compose. Ele **compila o `KaM_DedicatedServer` a partir
-do repositório do jogo** — nenhum binário é versionado aqui, e `GAME_REF` diz de
-qual commit. FPC compila o servidor mas não o cliente (18 arquivos usam inline
-vars do Delphi 10.3+), por isso só esta metade cabe num Dockerfile.
+São dois serviços do compose, da **mesma imagem**, com papéis diferentes:
+
+| Serviço | Porta | Papel |
+|---|---|---|
+| `gameserver` | `SERVER_PORT` (56789) | Casual. Sala aberta na mão, como sempre foi. Sem ranqueada nenhuma. |
+| `gameserver-ranked` | `RANKED_SERVER_PORT` (56790) | Só ranqueada. O único que fala `/internal/ranked/*` e o único onde a API reserva sala. |
+
+A imagem **compila o `KaM_DedicatedServer` a partir do repositório do jogo** —
+nenhum binário é versionado aqui, e `GAME_REF` diz de qual commit. FPC compila o
+servidor mas não o cliente (18 arquivos usam inline vars do Delphi 10.3+), por
+isso só esta metade cabe num Dockerfile.
 
 O `.ini` é escrito a cada boot a partir do ambiente: mudar nome ou porta é editar
 a env e reiniciar, sem rebuildar.
 
-### `network_mode: "service:api"` não é economia
+### Os gameservers saíram de dentro da API
 
-O servidor divide o namespace de rede da API. Isso resolve duas coisas de uma vez:
+Até a versão anterior o servidor dividia o namespace de rede da API
+(`network_mode: "service:api"`), e o efeito colateral era caro: **todo deploy da
+API derrubava partida em andamento**, porque recriar a API recriava o container
+do jogo junto.
 
-- Ele alcança `/auth/verify` em `127.0.0.1`. O ticket vai **na query string, em
-  texto claro** — o cliente HTTP do Pascal (`KM_HTTPClient`) só faz GET, sem TLS
-  e sem headers — então não pode sair da máquina.
-- O anúncio chega de um endereço que ninguém de fora forja, o que faz
-  `ANNOUNCE_ALLOWED_IPS=127.0.0.1` significar alguma coisa.
+Agora cada um tem o próprio container e a própria porta, todos na rede `default`
+do compose. Nenhum serviço declara `networks:` — de propósito.
 
-Efeitos colaterais: a porta do jogo se publica no serviço `api`, e reiniciar a
-API exige reiniciar o gameserver junto.
+**Por que nenhuma rede declarada.** O Dokploy reescreve essa chave ao injetar a
+rede do Traefik: em todas as stacks desta máquina ele grava exatamente
+`[dokploy-network, default]` no serviço que tem domínio. Declarar uma rede nossa
+seria apostar que ele *acrescenta* em vez de *substituir* — e nenhum repo aqui
+tem essa chave, então não há caso que prove o comportamento. Se ele substituir,
+os gameservers ficam sem rota até a API e **ninguém entra em servidor nenhum**,
+nem no casual, enquanto a plataforma segue de pé fingindo que está tudo bem.
+Deixando a chave ausente, o Dokploy faz o que já faz hoje.
 
-### `GAME_SERVER_PUBLIC_ADDRESS` é obrigatório
+**Como a API reconhece os gameservers, então.** `ANNOUNCE_ALLOWED_IPS` e
+`VERIFY_ALLOWED_IPS` aceitam **nome de serviço**, não só IP: valem
+`gameserver,gameserver-ranked`. Os nomes são resolvidos pelo DNS embutido do
+Docker, que só conhece os serviços deste projeto — ninguém na internet faz
+`gameserver` apontar para a própria máquina. IP fixo exigiria subnet própria, e
+subnet própria exigiria declarar `networks:`, que é justamente o que não dá.
+
+A resolução acontece num laço de fundo (`allowlist.ts`), não por requisição. Não
+é otimização: um `await` dentro do hook `onRequest` faz o Fastify sob o Bun mandar
+o cabeçalho duas vezes, e a recusa de 403 vira erro 500. Roda uma vez antes de a
+porta abrir e a cada 30 s depois — container reiniciado troca de IP.
+
+**Falha fechada.** Nome que não resolve não libera ninguém: sem nada resolvido,
+`serveradd.php` e `/auth/verify` respondem 403 e o boot loga o aviso. O contrário
+transformaria um DNS fora do ar em "aceita todo mundo".
+
+E **listar faixa não funciona nem seria seguro**: não há suporte a CIDR, e o
+Traefik também é container em faixa privada — liberar `172.16.0.0/12` deixaria
+passar requisição vinda da internet, proxiada por ele.
+
+O que continua valendo do desenho antigo: o tráfego não sai da máquina. O ticket
+vai **na query string, em texto claro** — o cliente HTTP do Pascal
+(`KM_HTTPClient`) só faz GET, sem TLS e sem headers — e uma bridge local do
+Docker não é a internet.
+
+Ganho de contenção: o servidor casual — o mais exposto, porque qualquer um entra
+numa sala aberta — não monta o volume do segredo da ranqueada.
+
+### `RANKED_SERVER_PORT` é o que distingue os dois
+
+Os dois anunciam como `dedicated`. Sem essa variável a API pegaria "o dedicado que
+anunciou por último" — sorteio, com metade das ranqueadas caindo no servidor
+casual. A mesma variável alimenta a env da API e o `SERVER_PORT` do container de
+ranqueada: um valor só, impossível de dessincronizar.
+
+Vazio ou `0` = qualquer dedicado, que é o comportamento certo para quem roda um
+servidor só.
+
+### `GAME_SERVER_PUBLIC_ADDRESS` não é obrigatório, mas sem ele ninguém conecta
 
 O master original guardava o IP de quem anunciou, porque cada servidor era uma
 máquina pública anunciando de fora. O nosso anuncia de dentro do Docker — o IP de
-origem é interno, e publicá-lo mandaria todos os jogadores discarem para
-`127.0.0.1`. Sem essa variável o compose nem sobe.
+origem é interno, e publicá-lo mandaria todos os jogadores discarem para um
+endereço que não existe fora da máquina.
+
+**Um valor serve para os dois servidores**: rodam na mesma máquina, no mesmo IP
+público, e o que os separa é a porta, que cada um manda no próprio anúncio — a
+identidade na tabela `game_servers` é o par `(ip, port)`.
+
+Já foi obrigatório (`${...:?}`) e **isso derrubou a plataforma inteira**: sem a
+variável o compose recusava subir, e conta, login e download caíam junto por causa
+de um endereço que só afeta a lista de servidores. Hoje a API sobe assim mesmo e
+avisa no log.
 
 ### Allowlist compara o socket, não o `X-Forwarded-For`
 
@@ -75,6 +135,14 @@ servidores falsos na lista e chamar `/auth/verify` da internet.
 Por isso `serveradd.php` e `/auth/verify` usam `peerIp()`
 ([api/src/peer-ip.ts](api/src/peer-ip.ts)), que lê o endereço do socket. Está
 coberto por teste — não troque por `request.ip`.
+
+**Allowlist vazio recusa todo mundo em produção** (em desenvolvimento continua
+aberto). Antes vazio aceitava qualquer origem, e o preço de errar a variável era a
+lista de servidores sequestrada: a chave é `(ip, port)` e o `ip` gravado é o
+`GAME_SERVER_PUBLIC_ADDRESS`, então de fora dava para reescrever a linha do
+servidor real e plantar um `dedicated` mais recente. Cuidado com valores que
+**parecem** preenchidos e viram lista vazia: `" "` (só espaço) e `","`. O boot
+loga `error` quando isso acontece.
 
 ## Publicando uma release
 

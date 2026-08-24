@@ -284,15 +284,24 @@ test('quem responde ao ping continua conectado — e recebendo', async () => {
   // O caso perigoso da regra é o falso positivo: derrubar jogador vivo a cada
   // ciclo de ping seria muito pior que o fantasma que ela veio consertar.
   let estado = estadoDaFila(1)
-  const app = buildApp(EU, async () => estado, 10)
+  // 200 ms, e não 10: o servidor derruba quem não respondeu ao ping ANTERIOR, e
+  // com intervalo curto qualquer engasgo do event loop (GC, máquina carregada,
+  // Docker rodando ao lado) atrasa o pong o bastante para o ping seguinte achar
+  // que o peer morreu. Falhava ~1 em 15 com 10 ms, e ainda falhou uma vez com
+  // 50 — sempre nesta linha, nunca por bug de produção.
+  //
+  // Um teste que fica vermelho por carga é pior que teste nenhum: treina a
+  // gente a ignorar vermelho. O que ele prova continua igual — vários ciclos de
+  // ping e a conexão viva —, só com margem que a máquina não derruba.
+  const app = buildApp(EU, async () => estado, 200)
 
   const ws = await conectar(app)
   const recebidas: unknown[] = []
   ws.addEventListener('message', (evento) => recebidas.push(JSON.parse(String(evento.data))))
   await ate(() => recebidas.length >= 1)
 
-  // ~20 ciclos de ping. O cliente responde pong sozinho.
-  await new Promise((r) => setTimeout(r, 200))
+  // ~6 ciclos de ping. O cliente responde pong sozinho.
+  await new Promise((r) => setTimeout(r, 1_200))
   expect(ws.readyState).toBe(WebSocket.OPEN)
 
   // E o canal continua servindo: seguir aberto sem entregar nada não valeria.

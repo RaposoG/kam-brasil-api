@@ -13,15 +13,21 @@ set -eu
 : "${ANNOUNCE_INTERVAL:=180}"
 
 # O jogo e o servidor falam HTTP puro: não há uma linha de SSL no cliente HTTP
-# do Pascal. Aqui isso não custa nada — a API está no mesmo namespace de rede,
-# então o tráfego nem sai da máquina.
-: "${MASTER_SERVER_URL:=http://127.0.0.1:3000/}"
-: "${AUTH_VERIFY_URL:=http://127.0.0.1:3000/auth/verify}"
+# do Pascal. Aqui isso não custa nada — `api` é o nome do serviço na rede `jogo`
+# do compose, uma bridge local, então o tráfego não sai da máquina. (Era
+# 127.0.0.1 enquanto o servidor dividia o namespace de rede da API; a razão do
+# loopback era essa e continua valendo do mesmo jeito.)
+: "${MASTER_SERVER_URL:=http://api:3000/}"
+: "${AUTH_VERIFY_URL:=http://api:3000/auth/verify}"
 : "${REQUIRE_AUTH:=1}"
 
-# Salas ranqueadas, ligadas por padrão. A API responde lista vazia quando não há
-# nada pareado, então perguntar não custa nada nem polui log.
-: "${RANKED_URL:=http://127.0.0.1:3000/internal/ranked}"
+# Salas ranqueadas. Ligadas por padrão só para quem não disse nada — o compose
+# diz: o servidor casual passa RANKED_URL="" e é assim que ele fica casual.
+#
+# `${VAR-default}` SEM dois-pontos de propósito: com `:=` o vazio explícito do
+# compose seria trocado pelo default, e o servidor casual sairia apontando para
+# as rotas de ranqueada.
+RANKED_URL="${RANKED_URL-http://api:3000/internal/ranked}"
 : "${RANKED_SECRET:=}"
 : "${RANKED_SECRET_FILE:=}"
 
@@ -31,13 +37,19 @@ set -eu
 #
 # Chegamos sempre depois: o compose só sobe este container com a API saudável,
 # e a API grava o arquivo antes de abrir a porta.
-if [ -z "${RANKED_SECRET}" ] && [ -n "${RANKED_SECRET_FILE}" ] && [ -r "${RANKED_SECRET_FILE}" ]; then
+if [ -z "${RANKED_URL}" ]; then
+  # Servidor casual. Não lê nem repassa segredo: o container nem monta o volume,
+  # mas RANKED_SECRET ainda poderia chegar pela env (RANKED_INTERNAL_SECRET no
+  # .env vale para os dois lados) e não há por que escrevê-lo num .ini que
+  # ninguém vai usar.
+  RANKED_SECRET=""
+elif [ -z "${RANKED_SECRET}" ] && [ -n "${RANKED_SECRET_FILE}" ] && [ -r "${RANKED_SECRET_FILE}" ]; then
   # tr -d '\r\n', e nao so '\n': um \r sobrando entra no sha256 e todo
   # /internal/ranked/* passa a responder 403 sem dizer por que, em silencio.
   RANKED_SECRET="$(tr -d '\r\n' < "${RANKED_SECRET_FILE}")"
 fi
 
-if [ -z "${RANKED_SECRET}" ]; then
+if [ -n "${RANKED_URL}" ] && [ -z "${RANKED_SECRET}" ]; then
   # Metade preenchida é o pior dos mundos: o servidor perguntaria a cada 3s e
   # levaria 403 sempre. Sem segredo, nem pergunta.
   echo "kam-brasil: sem segredo de ranqueada, salas ranqueadas desligadas neste servidor"
@@ -69,6 +81,8 @@ KamBrasilRankedUrl=${RANKED_URL}
 KamBrasilRankedSecret=${RANKED_SECRET}
 INI
 
-echo "kam-brasil: servidor \"${SERVER_NAME}\" na porta ${SERVER_PORT}, anunciando em ${MASTER_SERVER_URL}"
+# O sufixo distingue os dois containers no log: são a mesma imagem, com o mesmo
+# formato de linha, e sem isto não dá para saber qual deles está falando.
+echo "kam-brasil: servidor \"${SERVER_NAME}\" na porta ${SERVER_PORT}, anunciando em ${MASTER_SERVER_URL}${RANKED_URL:+ (ranqueada ligada)}"
 
 exec /app/KaM_DedicatedServer "$@"

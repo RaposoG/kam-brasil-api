@@ -395,15 +395,32 @@ async function reservarSalas(app: FastifyInstance) {
   // O endereço vem do anúncio vivo (`serveradd.php`), não de variável nova: é
   // o próprio servidor dizendo onde atende, e já é o endereço que a lista
   // publica para todo mundo.
+  //
+  // A porta, sim, vem da config: o servidor casual também anuncia como
+  // `dedicated`, e sem o filtro o `order by updatedAt` viraria sorteio entre os
+  // dois — metade das ranqueadas indo parar na sala aberta que qualquer um
+  // entra. Porta 0 = um servidor só, comportamento de antes.
+  const porta = config.RANKED_SERVER_PORT
   const servidor = await gameServers().findOne({
-    where: { dedicated: true, expiresAt: MoreThan(new Date()) },
+    where: { dedicated: true, expiresAt: MoreThan(new Date()), ...(porta > 0 && { port: porta }) },
     order: { updatedAt: 'DESC' },
   })
   if (!servidor) {
-    app.log.warn(
-      { lobbies: sorteados.length },
-      'lobby sorteado sem servidor dedicado anunciado: reserva adiada para o próximo tique',
-    )
+    // Duas mensagens porque são dois problemas diferentes: "nenhum servidor" se
+    // resolve subindo o gameserver; "nenhum servidor NESTA porta" quase sempre é
+    // RANKED_SERVER_PORT apontando para uma porta que ninguém anuncia — e um log
+    // genérico aí custa uma hora de gente procurando no lugar errado.
+    if (porta > 0) {
+      app.log.warn(
+        { lobbies: sorteados.length, porta },
+        `nenhum servidor dedicado anunciado na porta ${porta} (RANKED_SERVER_PORT): reserva adiada`,
+      )
+    } else {
+      app.log.warn(
+        { lobbies: sorteados.length },
+        'lobby sorteado sem servidor dedicado anunciado: reserva adiada para o próximo tique',
+      )
+    }
     return
   }
 

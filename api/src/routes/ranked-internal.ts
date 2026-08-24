@@ -19,6 +19,7 @@ import type { Match } from '../entities/match.ts'
 import type { Team } from '../entities/map.ts'
 import type { PlayerRating } from '../entities/player-rating.ts'
 import type { CortesTier } from '../entities/season.ts'
+import { origemPermitida } from '../allowlist.ts'
 import { peerIp } from '../peer-ip.ts'
 import {
   CORTES_SEMENTE,
@@ -272,7 +273,7 @@ export default async function rankedInternalRoutes(app: FastifyInstance) {
     // peerIp, nao request.ip: ver peer-ip.ts. X-Forwarded-For e escrito pelo
     // cliente, e um allowlist que confie nele nao protege nada.
     const origem = peerIp(request)
-    if (!config.verifyAllowedIps.includes(origem)) {
+    if (!origemPermitida(origem, config.verifyAllowedIps)) {
       app.log.warn({ origem, rota: request.routeOptions.url }, 'rota interna recusada: origem fora do allowlist')
       return reply.code(403).send('forbidden')
     }

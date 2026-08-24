@@ -1,4 +1,4 @@
-# Sobe a plataforma inteira: API + Postgres.
+# Sobe a plataforma inteira: API + Postgres + os DOIS servidores de jogo.
 #
 # O banco NAO e exposto para fora. A API fala com ele pelo nome do servico, na
 # rede interna do compose -- por isso nao ha nada de Postgres para voce
@@ -7,6 +7,21 @@
 #   docker compose exec postgres psql -U kambrasil -d kambrasil
 #
 # Em producao, preencha .env com JWT_SECRET, ADMIN_TOKEN e POSTGRES_PASSWORD.
+#
+# ---------------------------------------------------------------------------
+# TOPOLOGIA DE REDE -- leia antes de mexer, e uma linha errada aqui derruba a
+# plataforma inteira:
+#
+# REDES: nenhuma declarada, de proposito. O Dokploy reescreve a chave `networks:`
+# do servico com dominio ao injetar a rede do Traefik -- em todas as stacks desta
+# maquina ele grava exatamente [dokploy-network, default]. Declarar rede nossa
+# seria apostar que ele acrescenta em vez de substituir; se substituir, os
+# gameservers ficam sem rota ate a API e ninguem entra em servidor nenhum, nem no
+# casual, com a plataforma de pe fingindo que esta tudo bem.
+#
+# Com a chave ausente, o Dokploy faz o que ja faz hoje e todo mundo cai na
+# `default`. A API reconhece os gameservers pelo NOME do servico, resolvido pelo
+# DNS do Docker -- ver ANNOUNCE_ALLOWED_IPS mais abaixo e api/src/allowlist.ts.
 
 services:
   postgres:
@@ -38,6 +53,16 @@ services:
         # Espera o banco aceitar conexao. Sem isto a API sobe primeiro, falha na
         # migration e reinicia em loop ate dar sorte.
         condition: service_healthy
+    # AS DUAS REDES, e nesta ordem:
+    # Sem bloco `networks:` de proposito. O Dokploy reescreve esta chave ao
+    # injetar a rede do Traefik -- em TODAS as stacks desta maquina ele grava
+    # exatamente `[dokploy-network, default]`. Declarar uma rede nossa aqui e
+    # apostar que ele acrescenta em vez de substituir, e se ele substituir os
+    # gameservers ficam sem rota ate a API: ninguem entra em servidor nenhum,
+    # nem no casual, e a plataforma continua de pe fingindo que esta tudo bem.
+    #
+    # Todo mundo na `default` e o allowlist por NOME DE SERVICO (ver abaixo)
+    # tornam a pergunta irrelevante.
     environment:
       # "postgres" e o nome do servico: resolvido pelo DNS interno do compose.
       DATABASE_URL: postgres://kambrasil:${POSTGRES_PASSWORD:-kambrasil-interno}@postgres:5432/kambrasil
@@ -53,19 +78,37 @@ services:
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       MOTD: ${MOTD:-Bem-vindo ao Kam Brasil!}
       # Atras de nginx/Cloudflare tem que ser true, senao request.ip devolve o IP
-      # do proxy e os allowlists abaixo viram enfeite.
+      # do proxy e o log e o rate-limit viram enfeite. Os allowlists abaixo NAO
+      # dependem disto: eles olham o socket, nao o X-Forwarded-For.
       TRUST_PROXY: ${TRUST_PROXY:-true}
-      # 127.0.0.1 porque o gameserver divide o namespace de rede com a API (ver
-      # network_mode abaixo). E a comparacao usa o endereco do socket, nao o
-      # X-Forwarded-For -- senao qualquer um se passaria por interno.
-      ANNOUNCE_ALLOWED_IPS: ${ANNOUNCE_ALLOWED_IPS:-127.0.0.1}
-      VERIFY_ALLOWED_IPS: ${VERIFY_ALLOWED_IPS:-127.0.0.1}
+      # Quem pode anunciar servidor e verificar ticket: os NOMES dos servicos,
+      # nao IPs. O DNS embutido do Docker resolve nome de servico e so conhece
+      # este projeto -- ninguem na internet faz `gameserver` apontar para si.
+      #
+      # Nome, e nao IP fixo, porque IP fixo exigiria subnet propria, e subnet
+      # propria exige declarar `networks:` na API -- que e justamente o que o
+      # Dokploy reescreve (ver o comentario la em cima).
+      #
+      # Valor literal, e nao ${...}: um valor velho no painel do Dokploy (o
+      # antigo "127.0.0.1") sobreporia o default e desligaria anuncio e
+      # /auth/verify EM SILENCIO. E nunca ponha faixa: nao ha CIDR aqui, e
+      # liberar 172.16/12 deixaria passar o Traefik -- ou seja, a internet.
+      ANNOUNCE_ALLOWED_IPS: gameserver,gameserver-ranked
+      VERIFY_ALLOWED_IPS: gameserver,gameserver-ranked
       # Ranqueada ligada por padrao. RANKED_ENABLED=false desliga fila,
       # pareamento e tempo real -- historico e perfil seguem de pe.
       RANKED_ENABLED: ${RANKED_ENABLED:-true}
+      # Em qual porta atende o servidor de RANQUEADA. E como a API escolhe entre
+      # os dois servidores anunciados: sem isto ela pegaria "o dedicado que
+      # anunciou por ultimo", ou seja, sorteio entre o casual e o ranqueado.
+      #
+      # A MESMA variavel alimenta o SERVER_PORT do gameserver-ranked, embaixo:
+      # um valor so, impossivel de dessincronizar.
+      RANKED_SERVER_PORT: ${RANKED_SERVER_PORT:-56790}
       # O mesmo segredo tem que chegar aos dois lados. Ninguem precisa definir:
       # a API sorteia 32 bytes na primeira subida e grava neste arquivo, e o
-      # entrypoint do gameserver le o mesmo caminho no volume compartilhado.
+      # entrypoint do gameserver-ranked le o mesmo caminho no volume
+      # compartilhado. O gameserver casual nao monta esse volume.
       #
       # Definir RANKED_INTERNAL_SECRET a mao continua valendo e tem precedencia.
       RANKED_SECRET_FILE: /app/shared/ranked-secret
@@ -73,8 +116,8 @@ services:
       RANKED_ALLOWED_EXE_CRCS: ${RANKED_ALLOWED_EXE_CRCS:-}
       RANKED_TICK_MS: ${RANKED_TICK_MS:-3000}
       RANKED_BAN_TURNO_SEG: ${RANKED_BAN_TURNO_SEG:-25}
-      # Bloco de salas reservado para o ranqueado. Tem que caber no MAX_ROOMS do
-      # gameserver, la embaixo: indice fora do maximo e sala que nao existe.
+      # Bloco de salas reservado para o ranqueado, dentro do MAX_ROOMS do
+      # gameserver-ranked: indice fora do maximo e sala que nao existe.
       RANKED_ROOM_FIRST: ${RANKED_ROOM_FIRST:-8}
       RANKED_ROOM_COUNT: ${RANKED_ROOM_COUNT:-8}
       # Endereco que vai para a lista de servidores. Sem ele os jogadores
@@ -84,15 +127,21 @@ services:
       # Ja foi obrigatorio (`:?`) e isso derrubou a plataforma inteira: sem a
       # variavel o compose recusava subir, e conta, login e download caiam junto
       # por causa de um endereco que so afeta a lista de servidores.
+      #
+      # UM valor para os DOIS servidores, e esta certo assim: os dois rodam na
+      # mesma maquina, no mesmo IP publico, e o que os distingue e a PORTA --
+      # que cada um manda no proprio anuncio. A chave (ip, port) de game_servers
+      # continua separando os dois. Nao precisa virar por servico.
       GAME_SERVER_PUBLIC_ADDRESS: ${GAME_SERVER_PUBLIC_ADDRESS:-}
       SOURCES_DIR: /app/sources
       # Repositorio cujas GitHub Releases carregam os binarios compilados.
       BINARIES_REPO: ${BINARIES_REPO:-RaposoG/kam_brasil}
       # So necessario se BINARIES_REPO for privado.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-    # Sem "ports": em producao quem roteia e o proxy do Dokploy (Traefik), que
-    # alcanca o container pela rede interna a partir do dominio configurado.
-    # Publicar no host colidiria com o painel do proprio Dokploy, que usa a 3000.
+    # Sem "ports" para a 3000 HTTP: em producao quem roteia e o proxy do Dokploy
+    # (Traefik), que alcanca o container pela rede `default` a partir do dominio
+    # configurado. Publicar no host colidiria com o painel do proprio Dokploy,
+    # que usa a 3000.
     #
     # Em desenvolvimento, docker-compose.override.yml publica a porta. O Compose
     # carrega esse arquivo sozinho quando se roda `docker compose up` sem -f --
@@ -100,9 +149,6 @@ services:
     expose:
       - "3000"
     ports:
-      # A porta do jogo, publicada aqui e nao no gameserver, porque ele divide
-      # este namespace de rede. E TCP cru: o Traefik roteia HTTP, nao serve.
-      - "${SERVER_PORT:-56789}:${SERVER_PORT:-56789}"
       # HTTP puro para o master server, sem passar pelo Traefik.
       #
       # O cliente do KaM nao fala TLS -- nao existe uma linha de SSL no
@@ -112,6 +158,9 @@ services:
       #
       # Publicando a porta aqui, a rota fica no nosso compose, versionada, e
       # nenhum deploy a desfaz.
+      #
+      # A porta do JOGO nao esta mais aqui: cada gameserver publica a propria,
+      # agora que nao dividem mais este namespace de rede.
       - "${MASTER_HTTP_PORT:-8081}:3000"
     volumes:
       # Releases sao centenas de MB e vivem em disco, nao no banco. Sem volume,
@@ -121,7 +170,8 @@ services:
       # cada release reclonaria centenas de MB em vez de dar um fetch.
       - sources:/app/sources
       # So o segredo interno da ranqueada. Volume proprio, e nao um canto do
-      # `sources`, para poder ir read-only no gameserver: ele le, nunca escreve.
+      # `sources`, para poder ir read-only no gameserver-ranked: ele le, nunca
+      # escreve.
       - ranked-secret:/app/shared
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
@@ -130,6 +180,11 @@ services:
       retries: 3
       start_period: 20s
 
+  # ---------------------------------------------------------------------------
+  # Servidor CASUAL. Faz exatamente o que o de hoje faz: sala aberta na mao,
+  # sem ranqueada nenhuma. Mesma porta de hoje, de proposito -- quem tem o
+  # servidor salvo na lista de favoritos do jogo continua conectando.
+  # ---------------------------------------------------------------------------
   gameserver:
     build:
       context: ./gameserver
@@ -144,30 +199,79 @@ services:
         # Sem a API de pe o servidor anuncia no vazio e recusa todo mundo que
         # tentar entrar, porque nao consegue verificar ticket nenhum.
         condition: service_healthy
-    # Divide o namespace de rede da API. Nao e economia: e o que faz o servidor
-    # alcancar /auth/verify em 127.0.0.1 -- o ticket trafega em texto claro e nao
-    # pode sair da maquina -- e o que faz o anuncio chegar de um endereco que
-    # ninguem de fora consegue forjar.
-    #
-    # Efeito colateral: a porta do jogo se publica no servico `api`, acima, e
-    # reiniciar a API exige reiniciar este container junto.
-    network_mode: "service:api"
-    volumes:
-      - ranked-secret:/app/shared:ro
+    ports:
+      # Agora cada servidor publica a propria porta: eles nao dividem mais o
+      # namespace de rede da API. E TCP cru -- o Traefik roteia HTTP, nao serve.
+      - "${SERVER_PORT:-56789}:${SERVER_PORT:-56789}"
+    # Sem volume `ranked-secret`: este servidor nao tem por que enxergar o
+    # segredo, e sem ele nao tem como falar /internal/ranked/* nem por engano.
     environment:
       SERVER_NAME: ${SERVER_NAME:-Kam Brasil}
       SERVER_PORT: ${SERVER_PORT:-56789}
       MAX_ROOMS: ${MAX_ROOMS:-16}
       WELCOME_MESSAGE: ${WELCOME_MESSAGE:-}
       ANNOUNCE_INTERVAL: ${ANNOUNCE_INTERVAL:-180}
-      MASTER_SERVER_URL: http://127.0.0.1:3000/
-      AUTH_VERIFY_URL: http://127.0.0.1:3000/auth/verify
+      # "api" e o nome do servico, resolvido pelo DNS do compose. O trafego
+      # continua sem sair da maquina -- e uma bridge local --, que era toda a
+      # razao do 127.0.0.1 de antes: o ticket vai em texto claro na querystring,
+      # limitacao do cliente HTTP do Pascal.
+      MASTER_SERVER_URL: http://api:3000/
+      AUTH_VERIFY_URL: http://api:3000/auth/verify
       # 1 = so entra quem passou pelo launcher, com o nickname da conta.
       REQUIRE_AUTH: ${REQUIRE_AUTH:-1}
+      # VAZIO DE PROPOSITO: este e o servidor casual. Vazio aqui faz o
+      # entrypoint escrever KamBrasilRankedUrl= vazio no .ini, e o Pascal trata
+      # isso como "servidor comum, sem reservas".
+      #
+      # O entrypoint respeita o vazio explicito (usa ${RANKED_URL-...}, sem
+      # dois-pontos, que so cai no default quando a variavel nem existe).
+      RANKED_URL: ""
+    # E nao ha RANKED_SECRET nem RANKED_SECRET_FILE aqui: mesmo que alguem
+    # defina RANKED_INTERNAL_SECRET no .env, este servidor continua casual.
+
+  # ---------------------------------------------------------------------------
+  # Servidor de RANQUEADA. So ele fala /internal/ranked/*, so ele enxerga o
+  # segredo, e e nele que a API reserva as salas sorteadas.
+  #
+  # Ele TAMBEM aparece na lista publica de servidores: o endereco que a API usa
+  # para mandar os pareados vem do anuncio vivo (serveradd.php), entao ele
+  # precisa anunciar. Por isso o nome padrao ja avisa o que ele e.
+  # ---------------------------------------------------------------------------
+  gameserver-ranked:
+    build:
+      context: ./gameserver
+      args:
+        GAME_REF: ${GAME_REF:-master}
+    container_name: kambrasil-gameserver-ranked
+    restart: unless-stopped
+    depends_on:
+      api:
+        # Alem de precisar da API para verificar ticket, e ela quem grava o
+        # arquivo do segredo -- antes de abrir a porta, ou seja, antes de ficar
+        # saudavel. Chegar depois e o que faz o segredo estar la.
+        condition: service_healthy
+    ports:
+      - "${RANKED_SERVER_PORT:-56790}:${RANKED_SERVER_PORT:-56790}"
+    volumes:
+      # :ro porque ele so le. A API escreve.
+      - ranked-secret:/app/shared:ro
+    environment:
+      SERVER_NAME: ${RANKED_SERVER_NAME:-Kam Brasil Ranqueada}
+      # A MESMA variavel que a API recebe como RANKED_SERVER_PORT. E assim que
+      # a API sabe qual dos dois anuncios e o do servidor ranqueado.
+      SERVER_PORT: ${RANKED_SERVER_PORT:-56790}
+      # Precisa cobrir RANKED_ROOM_FIRST + RANKED_ROOM_COUNT (8 + 8 = 16 no
+      # padrao). Indice de sala fora do maximo e sala que nao existe.
+      MAX_ROOMS: ${RANKED_MAX_ROOMS:-16}
+      WELCOME_MESSAGE: ${RANKED_WELCOME_MESSAGE:-}
+      ANNOUNCE_INTERVAL: ${ANNOUNCE_INTERVAL:-180}
+      MASTER_SERVER_URL: http://api:3000/
+      AUTH_VERIFY_URL: http://api:3000/auth/verify
+      REQUIRE_AUTH: ${REQUIRE_AUTH:-1}
       # Base das rotas internas da ranqueada -- o servidor acrescenta /rooms,
-      # /started e /report. Loopback pelo mesmo motivo do AUTH_VERIFY_URL: o
-      # segredo vai na querystring, em texto claro, e nao pode sair da maquina.
-      RANKED_URL: http://127.0.0.1:3000/internal/ranked
+      # /started e /report. Sem sair da maquina pelo mesmo motivo do
+      # AUTH_VERIFY_URL: o segredo vai na querystring, em texto claro.
+      RANKED_URL: http://api:3000/internal/ranked
       # Vazio de proposito: o entrypoint le o segredo do arquivo que a API
       # gravou. Definir RANKED_INTERNAL_SECRET no .env sobrepoe os dois lados.
       RANKED_SECRET: ${RANKED_INTERNAL_SECRET:-}

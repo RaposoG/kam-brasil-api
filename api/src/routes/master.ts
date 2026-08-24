@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { LessThanOrEqual, MoreThan } from 'typeorm'
 import { config } from '../config.ts'
 import { gameServers, matchReports } from '../data-source.ts'
+import { origemPermitida } from '../allowlist.ts'
 import { peerIp } from '../peer-ip.ts'
 import { clampPlayerCount, sanitizeMapName } from '../sanitize.ts'
 import { RateLimiter } from '../throttle.ts'
@@ -35,10 +36,30 @@ function sanitizeServerName(raw: string): string {
   return raw.replace(/[,\r\n|]/g, ' ').trim().slice(0, 60)
 }
 
-function isAnnounceAllowed(ip: string): boolean {
-  // Lista vazia = qualquer origem pode anunciar. Só aceitável em desenvolvimento.
-  if (config.announceAllowedIps.length === 0) return true
-  return config.announceAllowedIps.includes(ip)
+/**
+ * Lista vazia FECHA em produção, e só abre em desenvolvimento.
+ *
+ * Antes abria em qualquer ambiente, e o custo de errar a variável era alto
+ * demais para um `return true`: a chave do anúncio é `(ip, port)` e o `ip`
+ * gravado é o `GAME_SERVER_PUBLIC_ADDRESS`, não a origem. Então qualquer um na
+ * internet reanunciava a linha do servidor de verdade — trocando nome, zerando
+ * `expiresAt`, sumindo com ele da lista — e, escolhendo outra porta, plantava
+ * um `dedicated=1` mais recente, que é exatamente o que `reservarSalas`
+ * (routes/ranked.ts) elege para hospedar as partidas ranqueadas.
+ *
+ * Falhar fechado troca isso por um sintoma barulhento e reversível: o servidor
+ * some da lista até a variável ser corrigida.
+ *
+ * Os parâmetros têm default para o teste conseguir variar a lista sem mexer no
+ * `config`, que é singleton de processo. O chamador passa só o IP.
+ */
+export function isAnnounceAllowed(
+  ip: string,
+  allowlist: readonly string[] = config.announceAllowedIps,
+  isDev: boolean = config.isDev,
+): boolean {
+  if (allowlist.length === 0) return isDev
+  return origemPermitida(ip, allowlist)
 }
 
 function str(request: FastifyRequest, key: string): string {

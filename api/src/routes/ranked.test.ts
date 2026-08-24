@@ -85,6 +85,12 @@ function repoFake(rows: unknown[] = []) {
 /** Toda SQL emitida, para os testes que precisam olhar a forma da consulta. */
 const sqlEmitidas: string[] = []
 
+/** O que o laço de reserva enxerga em `draw`. Vazio fora do teste dele. */
+let sorteados: Lobby[] = []
+
+/** Cada `where` com que o laço procurou servidor dedicado. */
+const buscasDeServidor: { where?: Record<string, unknown> }[] = []
+
 /** Roteia por trecho da SQL, na ordem em que as rotas as emitem. */
 async function queryFake(sql: string) {
   sqlEmitidas.push(sql)
@@ -122,12 +128,28 @@ await mock.module('../ranked/fila-repos.ts', () => ({
   seasons: () => repoFake([{ id: SEASON_ID, ativa: true }]),
   playerRatings: () => repoFake([RATING, RATING_RIVAL]),
   queueEntries: () => repoFake(),
-  lobbies: () => ({ ...repoFake(), findOne: async () => lobbyAtual }),
+  lobbies: () => ({
+    ...repoFake(),
+    findOne: async () => lobbyAtual,
+    // Só a reserva de sala procura por `draw`; os outros usos de `find` (turnos
+    // vencidos, salas em uso) continuam vendo lista vazia.
+    find: async (opcoes?: { where?: { estado?: unknown } }) => (opcoes?.where?.estado === 'draw' ? sorteados : []),
+  }),
   lobbyPlayers: () => ({ ...repoFake(), find: async () => jogadoresDoLobby }),
   // Só o laço de reserva de sala usa estes dois, e o teste sobe com tickMs = 0.
   maps: () => repoFake(),
-  gameServers: () => repoFake(),
+  gameServers: () => ({
+    ...repoFake(),
+    findOne: async (opcoes: { where?: Record<string, unknown> }) => {
+      buscasDeServidor.push(opcoes)
+      return null
+    },
+  }),
 }))
+
+// Dinâmico porque um import estático seria içado para antes das linhas de
+// `process.env` acima — e `config.ts` lê o ambiente no import.
+const { config } = await import('../config.ts')
 
 // Dinâmico e depois dos mocks: um import estático seria içado para antes deles.
 const {
@@ -490,4 +512,60 @@ test('o tique aborta lobby travado em draw/launch e invalida a partida fantasma'
   expect(abortou).not.toContain(`'live'`)
   // A partida criada na reserva vai junto, senão sobra `pending` no feed.
   expect(abortou).toContain(`update "matches"`)
+})
+
+/**
+ * Roda o laço por alguns tiques com um lobby sorteado esperando sala, e devolve
+ * os avisos que a reserva emitiu. `app.log.warn` é restaurado no fim: o logger
+ * de um Fastify sem logger pode ser compartilhado entre instâncias.
+ */
+async function tiqueDeReserva(porta: number): Promise<string[]> {
+  const portaAntes = config.RANKED_SERVER_PORT
+  config.RANKED_SERVER_PORT = porta
+  buscasDeServidor.length = 0
+  sorteados = [novoLobby({ estado: 'draw', mapaEscolhidoId: POOL_IDS[0] })]
+
+  const avisos: string[] = []
+  const app = buildApp(EU, 5)
+  const warnAntes = app.log.warn
+  app.log.warn = ((_obj: unknown, msg?: string) => {
+    avisos.push(typeof _obj === 'string' ? _obj : String(msg))
+  }) as typeof app.log.warn
+
+  try {
+    await app.ready()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  } finally {
+    app.log.warn = warnAntes
+    await app.close()
+    config.RANKED_SERVER_PORT = portaAntes
+    sorteados = []
+  }
+
+  return avisos
+}
+
+test('a reserva procura o dedicado NA PORTA da ranqueada, não o último que anunciou', async () => {
+  // O servidor casual também anuncia como `dedicated`. Sem o filtro de porta, o
+  // `order by updatedAt desc` vira sorteio entre os dois — e metade das
+  // ranqueadas cairia no casual, onde o bloco 8–15 não está reservado para nada
+  // e qualquer um entra na sala.
+  const avisos = await tiqueDeReserva(56_790)
+
+  expect(buscasDeServidor.length).toBeGreaterThan(0)
+  expect(buscasDeServidor[0]!.where).toMatchObject({ dedicated: true, port: 56_790 })
+
+  // "Nenhum servidor nesta porta" não é "nenhum servidor": quase sempre é a
+  // porta configurada errada, e um aviso genérico manda procurar no lugar errado.
+  expect(avisos.join('\n')).toContain('56790')
+  expect(avisos.join('\n')).toContain('RANKED_SERVER_PORT')
+})
+
+test('sem RANKED_SERVER_PORT a reserva aceita qualquer dedicado — quem roda um servidor só não quebra', async () => {
+  const avisos = await tiqueDeReserva(0)
+
+  expect(buscasDeServidor.length).toBeGreaterThan(0)
+  expect(buscasDeServidor[0]!.where).toMatchObject({ dedicated: true })
+  expect(buscasDeServidor[0]!.where).not.toHaveProperty('port')
+  expect(avisos.join('\n')).not.toContain('RANKED_SERVER_PORT')
 })

@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import fastifyStatic from '@fastify/static'
+import { INTERVALO_MS, atualizarNomes, nomesDe } from './allowlist.ts'
 import { config } from './config.ts'
 import { dataSource, seasons } from './data-source.ts'
 import authPlugin from './plugins/auth.ts'
@@ -124,7 +125,17 @@ if (config.adminEmails.length === 0) {
 }
 
 if (config.announceAllowedIps.length === 0) {
-  app.log.warn('ANNOUNCE_ALLOWED_IPS vazio: qualquer origem pode anunciar servidor. Não use assim em produção.')
+  if (config.isDev) {
+    app.log.warn('ANNOUNCE_ALLOWED_IPS vazio: em desenvolvimento qualquer origem pode anunciar servidor.')
+  } else {
+    // Fecha, não abre: ver isAnnounceAllowed em routes/master.ts. O sintoma é o
+    // servidor sumir da lista, e o log tem que dizer o porquê — senão vira meia
+    // hora de "o servidor não aparece" olhando para o container errado.
+    app.log.error(
+      'ANNOUNCE_ALLOWED_IPS vazio em produção: NENHUM servidor consegue se anunciar e a lista ficará vazia. ' +
+        'Defina os IPs dos gameservers. Atenção a valores que parecem preenchidos mas viram lista vazia: " " ou ",".',
+    )
+  }
 }
 
 if (!config.RANKED_ENABLED) {
@@ -155,6 +166,30 @@ if (!config.GAME_SERVER_PUBLIC_ADDRESS) {
     'GAME_SERVER_PUBLIC_ADDRESS vazio: a lista publicará o IP de quem anunciou. ' +
       'Vindo de container isso é um endereço interno, e ninguém consegue conectar.',
   )
+}
+
+// Os allowlists aceitam nome de serviço, não só IP: desde que os gameservers
+// saíram de dentro da API eles têm IP dinâmico na rede do compose. Resolvemos
+// antes de abrir a porta — se ficasse para o primeiro tique de fundo, haveria
+// uma janela em que anúncio e /auth/verify recusariam servidor legítimo.
+const nomesDoAllowlist = [...new Set([...nomesDe(config.announceAllowedIps), ...nomesDe(config.verifyAllowedIps)])]
+if (nomesDoAllowlist.length > 0) {
+  const ips = await atualizarNomes(nomesDoAllowlist)
+  if (ips.size === 0) {
+    // Fecha em vez de abrir, então o sintoma é "nenhum servidor na lista" e não
+    // "qualquer um anuncia". Costuma ser o gameserver ainda subindo; o laço
+    // abaixo reconsulta e conserta sozinho.
+    app.log.warn({ nomes: nomesDoAllowlist }, 'nenhum nome do allowlist resolveu ainda: anúncio e /auth/verify recusam até resolver')
+  } else {
+    app.log.info({ nomes: nomesDoAllowlist, ips: [...ips] }, 'allowlist por nome resolvido')
+  }
+
+  // Container reiniciado troca de IP, e o allowlist tem que acompanhar sem
+  // exigir restart da API.
+  const laco = setInterval(() => {
+    atualizarNomes(nomesDoAllowlist).catch((error) => app.log.error({ error }, 'falha ao reconsultar allowlist'))
+  }, INTERVALO_MS)
+  laco.unref()
 }
 
 await app.listen({ port: config.API_PORT, host: config.API_HOST })

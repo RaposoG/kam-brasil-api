@@ -179,6 +179,24 @@ const schema = z.object({
   RANKED_ROOM_COUNT: z.coerce.number().int().positive().default(8),
 
   /**
+   * Porta do servidor dedicado que hospeda as salas ranqueadas.
+   *
+   * Com dois servidores no ar — o casual, que qualquer um abre sala na mão, e o
+   * da ranqueada — os dois anunciam como `dedicated`, e a reserva pegava o que
+   * anunciou por último: metade das partidas ranqueadas cairia no servidor
+   * casual, onde o bloco `RANKED_ROOM_FIRST..+COUNT` não está reservado para
+   * nada e qualquer um entra na sala.
+   *
+   * A porta é o que distingue os dois: a identidade de um servidor anunciado é
+   * o par (ip, port) — ver `GameServer` —, e com os dois containers atrás do
+   * mesmo endereço público o ip é igual nos dois.
+   *
+   * Vazio/0 = qualquer dedicado, que é o comportamento de sempre e o certo para
+   * quem roda um servidor só.
+   */
+  RANKED_SERVER_PORT: z.coerce.number().int().nonnegative().default(0),
+
+  /**
    * Ligue em produção quando a API estiver atrás de nginx/Cloudflare.
    * Sem isso, request.ip devolve o IP do proxy — e o ANNOUNCE_ALLOWED_IPS
    * passaria a comparar sempre contra o mesmo endereço, virando inútil.

@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify'
 import { LessThan, MoreThan } from 'typeorm'
 import { config } from '../config.ts'
 import { playTickets } from '../data-source.ts'
+import { origemPermitida } from '../allowlist.ts'
 import { peerIp } from '../peer-ip.ts'
 
 /**
@@ -62,7 +63,7 @@ export default async function verifyRoutes(app: FastifyInstance) {
       // peerIp, nao request.ip: ver peer-ip.ts. X-Forwarded-For e escrito pelo
       // cliente, e um allowlist que confie nele nao protege nada.
       const remoteIp = peerIp(request)
-      if (!config.verifyAllowedIps.includes(remoteIp)) {
+      if (!origemPermitida(remoteIp, config.verifyAllowedIps)) {
         request.log.warn({ remoteIp }, 'verificação recusada: origem fora do allowlist')
         return reply.code(403).send('forbidden')
       }
