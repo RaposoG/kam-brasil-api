@@ -202,9 +202,17 @@ export async function refresh() {
   erro.value = "";
   checking.value = true;
   try {
-    check.value = await checkUpdate();
-    assetsOk.value = await assetsStatus();
-    if (!original.value) original.value = await findOriginalGame();
+    // Em paralelo, não em série: são três perguntas independentes, e uma delas
+    // vai à rede. Encadeadas, o jogador esperava a soma das três antes de a
+    // tela assentar.
+    const [c, a, o] = await Promise.all([
+      checkUpdate(),
+      assetsStatus(),
+      original.value ? Promise.resolve(original.value) : findOriginalGame(),
+    ]);
+    check.value = c;
+    assetsOk.value = a;
+    original.value = o;
     verificadoEm.value = Date.now();
   } catch (e) {
     erro.value = String(e);
@@ -315,8 +323,12 @@ export async function iniciar() {
   iniciado = true;
   onInstallProgress((p) => (download.value = p));
   onAssetProgress((p) => (assetStep.value = p));
+
   await refresh();
-  // Depois do refresh e sem travar a tela: uma falha aqui não pode impedir
-  // ninguém de jogar. Sem rede, simplesmente não aparece o aviso.
-  await procurarLauncher();
+
+  // Sem `await`: a consulta ao GitHub leva ~700 ms, e é a pergunta menos urgente
+  // do boot -- "existe launcher novo?". Aguardá-la deixava a tela travada por
+  // quase um segundo depois de tudo o mais já estar pronto. O aviso aparece
+  // quando a resposta chegar; até lá, dá para jogar.
+  void procurarLauncher();
 }
