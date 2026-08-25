@@ -1,4 +1,4 @@
-import { mkdir, rm, stat } from 'node:fs/promises'
+import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { config } from './config.ts'
 
@@ -15,6 +15,7 @@ import { config } from './config.ts'
  * | Parte | Origem |
  * |---|---|
  * | `KaM_Remake.exe`, `RXXPacker.exe` | anexos de uma GitHub Release |
+ * | sprites, som, música, paletas | anexo `assets.zip` da mesma Release |
  * | textos, fontes, cursores, DLLs | repositório do jogo |
  * | mapas, campanhas, tutoriais | `reyandme/kam_remake_maps` |
  * | sprites da comunidade | `reyandme/kam_remake_resources` |
@@ -84,6 +85,24 @@ const BINARIES: [string, string][] = [
   ['RXXPacker.exe', 'Utils/RXXPacker/RXXPacker.exe'],
 ]
 
+/**
+ * Anexo da mesma GitHub Release com sprites, som, música e paletas prontos —
+ * `data/Sprites/`, `data/sfx/`, `Music/`, `data/gfx/` já na posição final.
+ *
+ * Isto existe porque o KaM Remake Beta nunca pediu o jogo original: ele **já
+ * vem** com os sprites empacotados, e quem precisa do original é quem compila,
+ * não quem joga. Nós fazíamos o contrário — cada jogador tinha que ter uma
+ * cópia do KaM de 1998 e converter na própria máquina. Isso explicava as
+ * reclamações todas de uma vez: sprites sem a camada HD (`.rxa`, que o engine
+ * prefere com sombras alpha e que ninguém gerava), ícone da mina de ferro
+ * errado, som e música diferentes de pessoa para pessoa.
+ *
+ * Anexo e não repositório: são centenas de MB de binário que mudam junto com o
+ * executável, e git não serve para isso. Publicar continua sendo "anexe os
+ * arquivos na Release, chame a rota" — sem passo manual novo no servidor.
+ */
+const ASSETS_ZIP = 'assets.zip'
+
 export type Progress = (message: string) => void
 
 async function exists(path: string) {
@@ -95,13 +114,22 @@ async function exists(path: string) {
   }
 }
 
-export async function run(cmd: string[], cwd?: string): Promise<void> {
+/** Roda um comando e devolve o que ele escreveu em stdout. */
+export async function run(cmd: string[], cwd?: string): Promise<string> {
   const proc = Bun.spawn(cmd, { cwd, stdout: 'pipe', stderr: 'pipe' })
-  const code = await proc.exited
+  // Consumir os dois canais em paralelo com o `exited`, e nao depois dele: um
+  // comando que enche o buffer do pipe fica bloqueado esperando alguem ler, e
+  // o `await proc.exited` nunca voltaria. A listagem do zip tem centenas de
+  // linhas e passa perto desse limite.
+  const [out, err, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
   if (code !== 0) {
-    const err = await new Response(proc.stderr).text()
     throw new Error(`${cmd.join(' ')} falhou (${code}): ${err.trim().split('\n').slice(-3).join(' ')}`)
   }
+  return out
 }
 
 /** Clona raso, ou atualiza se já existir. */
@@ -159,17 +187,77 @@ async function downloadAsset(tag: string, asset: string, dest: string, log: Prog
   }
 
   await mkdir(join(dest, '..'), { recursive: true })
-  await Bun.write(dest, await response.arrayBuffer())
+  // A `Response` direto, e nao `await response.arrayBuffer()`: o assets.zip tem
+  // centenas de MB e o arrayBuffer traria tudo para a memoria de uma vez.
+  await Bun.write(dest, response)
+}
+
+/**
+ * Entrada de zip que escaparia do diretório de destino.
+ *
+ * O `unzip` recusa isto por conta própria, mas **em silêncio**: ele pula a
+ * entrada, avisa no stderr e sai com código 0 — a release sairia sem aquele
+ * arquivo e ninguém ficaria sabendo. Conferir antes é o que transforma o
+ * silêncio em erro. Mesmo motivo do `enclosed_name()` no launcher
+ * (`src-tauri/src/install.rs`).
+ *
+ * Barra invertida também reprova: nenhum arquivo do jogo tem `\` no nome, e no
+ * Linux o `unzip` a trataria como letra comum — `..\..\etc` viraria um arquivo
+ * de nome esquisito em vez do que o zip pedia.
+ */
+export function entradaDeZipInsegura(nome: string): boolean {
+  if (nome.startsWith('/')) return true // absoluto, e UNC `//servidor/...`
+  if (/^[a-zA-Z]:/.test(nome)) return true // `C:\...`
+  return nome.replace(/\\/g, '/').split('/').includes('..')
+}
+
+/**
+ * Baixa o `assets.zip` da Release e o abre em cima da árvore.
+ *
+ * Roda **depois** das cópias de propósito: `copyDir` usa `cp -r`, e `cp -r orig
+ * dest` com `dest` já existente copia para *dentro* dele (viraria
+ * `data/gfx/fonts/fonts`). O `unzip` não tem essa mania — funde com o que já
+ * está lá —, então extrair por último é a ordem que não depende de sorte.
+ */
+async function extractAssets(tag: string, out: string, log: Progress) {
+  const zipPath = join(config.SOURCES_DIR, '_assets.zip')
+  await downloadAsset(tag, ASSETS_ZIP, zipPath, log)
+
+  try {
+    const entries = (await run(['unzip', '-Z1', zipPath])).split('\n').filter(Boolean)
+    const inseguras = entries.filter(entradaDeZipInsegura)
+    if (inseguras.length > 0) {
+      throw new Error(`${ASSETS_ZIP} tem caminho que sai do destino: ${inseguras.slice(0, 5).join(', ')}`)
+    }
+
+    log(`extraindo ${ASSETS_ZIP} (${entries.length} entradas)`)
+    await run(['unzip', '-q', '-o', zipPath, '-d', out])
+  } finally {
+    // Sao centenas de MB no volume de cache; publicar e raro, rebaixar e barato.
+    await rm(zipPath, { force: true })
+  }
+}
+
+/** Existe e tem algo dentro? */
+async function naoVazia(dir: string): Promise<boolean> {
+  try {
+    return (await readdir(dir)).length > 0
+  } catch {
+    return false
+  }
 }
 
 /**
  * Monta a árvore completa e devolve o caminho.
  *
- * O que **não** entra: sprites, sons e músicas. Vêm do jogo original e são
- * gerados na máquina do jogador.
+ * Sprites, som, música e paletas ENTRAM, prontos, vindos do `assets.zip`. O
+ * jogador não precisa mais ter o Knights and Merchants de 1998 nem converter
+ * nada na própria máquina — era de lá que vinham os sprites sem HD, o ícone
+ * errado da mina de ferro e o som diferente para cada pessoa.
  *
- * Os `.dat` de casas e unidades ENTRAM: sao regras de simulacao e precisam ser
- * identicos para todos, senao as partidas desincronizam.
+ * Os `.dat` de casas e unidades ENTRAM pelo mesmo motivo de sempre: sao regras
+ * de simulacao e precisam ser identicos para todos, senao as partidas
+ * desincronizam.
  */
 export async function buildReleaseTree(binariesTag: string, log: Progress): Promise<string> {
   const out = join(config.SOURCES_DIR, '_tree')
@@ -200,6 +288,9 @@ export async function buildReleaseTree(binariesTag: string, log: Progress): Prom
     await copyDir(join(resources, 'SpriteResource', folder), join(out, 'SpriteResource', folder), log)
   }
 
+  log('sprites, som, musica e paletas prontos')
+  await extractAssets(binariesTag, out, log)
+
   // Uma montagem errada falha em silencio: a release sairia sem o jogo dentro,
   // e o jogador so descobriria ao abrir. Conferir transforma isso em erro aqui.
   //
@@ -226,9 +317,36 @@ export async function buildReleaseTree(binariesTag: string, log: Progress): Prom
     'MapsMP',
     'Campaigns',
     'SpriteResource/7',
+    // Vindos do assets.zip. Antes desta lista, uma release sem eles era release
+    // sem jogo dentro -- e so aparecia quando o jogador abria.
+    //
+    // Os `.rxx` sao a base obrigatoria: sem o arquivo, LoadSprites faz `Exit` e
+    // aquele conjunto inteiro de sprites nao existe (KM_ResSprites.pas:2039).
+    // O `_a.rxx` e o `.rxa` sao camadas preferidas quando ha sombras alpha, mas
+    // caem de volta no `.rxx` — por isso nao entram aqui. `Custom` tambem nao:
+    // e `ruCustom`, ninguem o carrega sozinho.
+    'data/Sprites/Trees.rxx',
+    'data/Sprites/Houses.rxx',
+    'data/Sprites/Units.rxx',
+    'data/Sprites/GUI.rxx',
+    'data/Sprites/GUIMain.rxx',
+    'data/Sprites/Tileset.rxx',
+    'data/sfx/sounds.dat', // KM_ResSound.pas:319
+    // Em runtime o engine carrega UMA paleta, e e esta (KM_Resource.pas:161).
+    'data/gfx/pal0.bbm',
   ]
+
+  // Pasta existir nao basta nestas duas: vazia e exatamente o que sobra quando
+  // o conteudo nao entrou no zip, e o jogo abre mudo sem reclamar de nada.
+  //
+  // `speech.eng` e a fala de todo mundo, inclusive de quem joga em ptb:
+  // TKMResSounds.Create monta "speech.<idioma>" com fallback do locales.txt
+  // (KM_ResSound.pas:299) e ptb nao declara fallback -- cai em eng.
+  const requiredNonEmpty = ['data/sfx/speech.eng', 'Music']
+
   const missing: string[] = []
   for (const path of required) if (!(await exists(join(out, path)))) missing.push(path)
+  for (const path of requiredNonEmpty) if (!(await naoVazia(join(out, path)))) missing.push(`${path} (vazia)`)
   if (missing.length > 0) {
     throw new Error(`montagem incompleta, faltou: ${missing.join(', ')}`)
   }
