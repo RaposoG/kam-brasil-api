@@ -1,6 +1,6 @@
 [package]
 name = "launcher"
-version = "1.5.3"
+version = "1.5.4"
 description = "Launcher do Kam Brasil"
 authors = ["Kam Brasil"]
 edition = "2021"
