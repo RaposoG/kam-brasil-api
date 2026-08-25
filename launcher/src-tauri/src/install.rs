@@ -25,6 +25,49 @@ use crate::auth::AppState;
 
 pub const VERSION_FILE: &str = "kambrasil.json";
 
+/// O arquivo que decide se a instalacao esta mesmo completa.
+///
+/// Escolhido por mudar em toda release e por ser o que o jogador vai abrir: se
+/// ele esta velho, nada mais importa.
+const EXE_SENTINELA: &str = "KaM_Remake.exe";
+
+/// O que a conferencia do executavel concluiu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sentinela {
+    Igual,
+    Divergente,
+    /// Release antiga, empacotada antes de o executavel ter este nome.
+    AusenteNoManifesto,
+    /// Manifesto inacessivel -- sem internet, ou API fora do ar.
+    NaoConferida,
+}
+
+impl Sentinela {
+    fn rotulo(self) -> &'static str {
+        match self {
+            Sentinela::Igual => "igual",
+            Sentinela::Divergente => "divergente",
+            Sentinela::AusenteNoManifesto => "ausente no manifesto",
+            Sentinela::NaoConferida => "nao conferida",
+        }
+    }
+}
+
+/// Precisa baixar?
+///
+/// Versao diferente decide sozinha. Versao igual so passa se o executavel
+/// tambem passar -- e a conferencia que faltava quando um jogo parado na 1.0.4
+/// se apresentou como 1.3.0 pronto para jogar.
+///
+/// Nao conseguir conferir NAO reprova: quem esta sem internet nao deve ser
+/// mandado a reinstalar 839 MB que provavelmente ja tem.
+pub fn precisa_atualizar(instalada: Option<&str>, ultima: &str, sentinela: Sentinela) -> bool {
+    if instalada != Some(ultima) {
+        return true;
+    }
+    sentinela == Sentinela::Divergente
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ManifestFile {
     pub path: String,
@@ -204,13 +247,41 @@ pub async fn check_update(state: State<'_, AppState>) -> Result<serde_json::Valu
         }));
     };
 
-    let needs_update = installed.as_deref() != Some(latest.version.as_str());
+    // A versao gravada em disco diz o que a ULTIMA instalacao ACHOU que fez.
+    // Nao basta.
+    //
+    // Aconteceu de verdade: instalacao interrompida perto do fim, o marcador
+    // ficou na versao antiga -- e ate ai tudo bem, porque `installed != latest`
+    // pediria a atualizacao. O que nao pode acontecer e o contrario: o marcador
+    // dizer que esta tudo certo enquanto os arquivos nao estao.
+    //
+    // Por isso conferimos uma SENTINELA: o executavel do jogo. Ele muda a cada
+    // release e e o arquivo que mais importa -- se ele diverge do manifesto, a
+    // instalacao nao esta completa, diga o marcador o que disser. Um hash de
+    // 10 MB custa milissegundos; hashear os 839 MB no boot custaria minutos.
+    let mut sentinela = Sentinela::Igual;
+
+    if installed.as_deref() == Some(latest.version.as_str()) {
+        sentinela = match fetch_manifest(&latest.manifest_url).await {
+            Ok(manifest) => match manifest.files.iter().find(|f| f.path == EXE_SENTINELA) {
+                Some(exe) if precisa_baixar(&dir, exe) => Sentinela::Divergente,
+                Some(_) => Sentinela::Igual,
+                None => Sentinela::AusenteNoManifesto,
+            },
+            // Manifesto fora do ar nao e motivo para mandar reinstalar: fica com
+            // o que o marcador diz, e a tela avisa que nao deu para conferir.
+            Err(_) => Sentinela::NaoConferida,
+        };
+    }
+
+    let needs_update = precisa_atualizar(installed.as_deref(), &latest.version, sentinela);
 
     Ok(serde_json::json!({
         "path": dir.display().to_string(),
         "installedVersion": installed,
         "latest": latest,
         "needsUpdate": needs_update,
+        "sentinela": sentinela.rotulo(),
     }))
 }
 
@@ -1149,5 +1220,35 @@ mod poda {
 
         assert_eq!(primeira, 2);
         assert_eq!(segunda, 0, "a segunda passada não tem o que apagar");
+    }
+}
+
+#[cfg(test)]
+mod testes_sentinela {
+    use super::*;
+
+    #[test]
+    fn versao_diferente_sempre_pede_atualizacao() {
+        assert!(precisa_atualizar(Some("1.0.4"), "1.3.0", Sentinela::Igual));
+        assert!(precisa_atualizar(None, "1.3.0", Sentinela::Igual));
+    }
+
+    #[test]
+    fn versao_igual_com_executavel_velho_pede_atualizacao() {
+        // O caso que motivou tudo isto: o marcador dizia a versao certa e os
+        // arquivos eram de um mes atras.
+        assert!(precisa_atualizar(Some("1.3.0"), "1.3.0", Sentinela::Divergente));
+    }
+
+    #[test]
+    fn versao_igual_e_executavel_igual_nao_pede_nada() {
+        assert!(!precisa_atualizar(Some("1.3.0"), "1.3.0", Sentinela::Igual));
+    }
+
+    #[test]
+    fn falha_ao_conferir_nao_manda_reinstalar() {
+        // Sem internet nao se acusa instalacao quebrada.
+        assert!(!precisa_atualizar(Some("1.3.0"), "1.3.0", Sentinela::NaoConferida));
+        assert!(!precisa_atualizar(Some("1.3.0"), "1.3.0", Sentinela::AusenteNoManifesto));
     }
 }

@@ -34,6 +34,8 @@ export interface UpdateCheck {
   installedVersion: string | null
   latest: LatestRelease | null
   needsUpdate: boolean
+  /** `igual` | `divergente` | `ausente no manifesto` | `nao conferida` */
+  sentinela?: string
 }
 
 export interface GameStatus {

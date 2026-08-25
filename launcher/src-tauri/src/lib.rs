@@ -23,6 +23,27 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .setup(|app| {
+            // O icone da BARRA DE TAREFAS nao vem do recurso embutido no .exe:
+            // vem do icone da janela. Sem defini-lo, o Windows cai no cache do
+            // atalho -- que continuava mostrando o icone padrao do Tauri, da
+            // primeira instalacao, mesmo depois de o executavel ja trazer o
+            // brasao (conferido: o .exe instalado tinha o icone certo e a barra
+            // mostrava o antigo).
+            //
+            // Falhar aqui nao impede o launcher de abrir: perder o icone e feio,
+            // nao fatal.
+            use tauri::Manager;
+            if let Some(janela) = app.get_webview_window("main") {
+                match tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png")) {
+                    Ok(icone) => {
+                        let _ = janela.set_icon(icone);
+                    }
+                    Err(e) => eprintln!("icone da janela nao carregou: {e}"),
+                }
+            }
+            Ok(())
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())

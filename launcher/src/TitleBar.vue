@@ -15,7 +15,7 @@ onMounted(async () => (versao.value = await getVersion()));
 <template>
   <div class="titulo" data-tauri-drag-region>
     <div class="marca" data-tauri-drag-region>
-      <div class="losango" />
+      <img class="brasao" src="./assets/marca.png" alt="" draggable="false" data-tauri-drag-region />
       <span class="nome">KAM BRASIL</span>
       <span class="versao">launcher {{ versao }}</span>
     </div>
@@ -42,12 +42,16 @@ onMounted(async () => (versao.value = await getVersion()));
   align-items: center;
   gap: 12px;
 }
-.losango {
-  width: 9px;
-  height: 9px;
-  background: var(--ouro);
-  transform: rotate(45deg);
-  box-shadow: 0 0 0 3px rgba(212, 162, 74, 0.12);
+.brasao {
+  /* 18px e nao 9: o brasao tem desenho dentro (monograma, coroa, pergaminho) e
+     some se ficar do tamanho do losango que ele substituiu. */
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  /* A barra e area de arrastar a janela; sem isto o cursor muda em cima da
+     imagem e o arrasto falha justamente onde o usuario tende a clicar. */
+  pointer-events: none;
+  user-select: none;
 }
 .nome {
   font-family: var(--display);

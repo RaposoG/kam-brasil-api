@@ -130,10 +130,35 @@ export const status = computed(() => {
       indeterminado: false,
     };
 
+  // Sem resposta da verificação, NÃO se diz que está tudo pronto.
+  //
+  // Enquanto existiam os estados `original` e `preparar`, eles barravam este
+  // caso por acidente. Ao removê-los, o `jogar` virou o fim de linha de tudo —
+  // inclusive de "a verificação falhou e eu não sei em que versão você está".
+  //
+  // O sintoma foi real: instalação parada na 1.0.4, release 1.3.0 publicada, e o
+  // botão dizendo JOGAR. O jogador abriria um executável de um mês atrás
+  // achando que estava atualizado.
+  if (!c)
+    return {
+      acao: "esperar" as Acao,
+      titulo: erro.value ? "Não foi possível verificar a versão" : "Verificando a instalação",
+      detalhe: erro.value || "consultando a API",
+      curto: erro.value ? "verificação falhou" : "verificando",
+      pct: 0,
+      indeterminado: true,
+    };
+
   return {
     acao: "jogar" as Acao,
     titulo: "Tudo pronto para a batalha",
-    detalhe: desdeVerificacao(),
+    // Quando o manifesto não respondeu, o que se sabe é o que o arquivo de
+    // versão afirma — e é justamente ele que já mentiu uma vez. Dizer de onde
+    // vem a confiança é mais honesto que esconder.
+    detalhe:
+      c?.sentinela === "nao conferida"
+        ? "sem conexão para conferir os arquivos — abrindo a versão que está no disco"
+        : desdeVerificacao(),
     curto: "instalação verificada",
     pct: 100,
     indeterminado: false,
@@ -270,6 +295,15 @@ export async function procurarLauncher() {
   }
 }
 
+/**
+ * De quanto em quanto tempo revalidar ao voltar para a janela.
+ *
+ * Alt-tab é constante; consultar a API a cada um seria abuso. Um minuto é curto
+ * o bastante para não deixar a tela mentir por muito tempo e longo o bastante
+ * para o uso normal não gerar tráfego nenhum.
+ */
+const REVALIDAR_APOS_MS = 60_000;
+
 let iniciado = false;
 
 /** Assina os eventos de progresso e faz a primeira verificação. Idempotente. */
@@ -279,6 +313,18 @@ export async function iniciar() {
   onInstallProgress((p) => (download.value = p));
 
   await refresh();
+
+  // A tela não pode ficar apostando em estado de horas atrás.
+  //
+  // O launcher fica aberto o dia inteiro. Sem isto, uma release publicada
+  // depois do boot só apareceria no próximo reinício — e, pior, uma instalação
+  // que quebrou nesse meio-tempo continuaria se apresentando como pronta.
+  window.addEventListener("focus", () => {
+    if (busy.value || checking.value) return;
+    if (verificadoEm.value && Date.now() - verificadoEm.value < REVALIDAR_APOS_MS) return;
+    void refresh();
+    void procurarLauncher();
+  });
 
   // Sem `await`: a consulta ao GitHub leva ~700 ms, e é a pergunta menos urgente
   // do boot -- "existe launcher novo?". Aguardá-la deixava a tela travada por

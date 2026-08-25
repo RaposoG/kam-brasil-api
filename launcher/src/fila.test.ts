@@ -39,3 +39,12 @@ describe("versão desatualizada barra a fila", () => {
     expect(impedimentoParaFila("instalar", "1.5.0")).toContain("launcher");
   });
 });
+
+describe("o launcher nunca diz 'pronto' sem saber", () => {
+  test("sem verificação, a fila também barra", () => {
+    // O estado `esperar` é o que sobra quando a checagem não respondeu. Ele
+    // barra a fila pelo mesmo motivo que barra o jogar: não sabemos em que
+    // versão o jogador está, e versão errada em ranqueada é desync.
+    expect(impedimentoParaFila("esperar")).not.toBe("");
+  });
+});

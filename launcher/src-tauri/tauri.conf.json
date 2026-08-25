@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Kam Brasil",
-  "version": "1.5.0",
+  "version": "1.5.3",
   "identifier": "br.com.kambrasil.launcher",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -40,7 +40,9 @@
   "bundle": {
     "active": true,
     "windows": {
-      "webviewInstallMode": { "type": "embedBootstrapper" }
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      }
     },
     "createUpdaterArtifacts": true,
     "publisher": "Kam Brasil",
@@ -48,7 +50,10 @@
     "shortDescription": "Launcher do Kam Brasil",
     "longDescription": "Instala, atualiza e abre o Kam Brasil. O jogo vem completo — gráficos, sons e músicas inclusos. Não é preciso ter nenhum outro jogo instalado.",
     "category": "Game",
-    "targets": ["msi", "nsis"],
+    "targets": [
+      "msi",
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
