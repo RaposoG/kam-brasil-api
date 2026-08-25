@@ -233,14 +233,31 @@ async function temporadaAtiva() {
   return seasons().findOne({ where: { ativa: true } })
 }
 
-async function poolDaTemporada(seasonId: string, m: EntityManager = dataSource.manager): Promise<MapaDoPool[]> {
+/**
+ * Os mapas da temporada que servem para ESTE modo.
+ *
+ * O filtro por modo não é preferência, é o que impede o jogo de estourar: um
+ * mapa de 2 lugares sorteado para um 2v2 manda o quarto jogador para um local
+ * que não existe, e o cliente morre com EAccessViolation ao ler o `.dat`.
+ * Aconteceu num teste ao vivo, com Dangerous Strait num 2v2.
+ *
+ * A coluna `modos` existia desde o começo e nunca era consultada — o sorteio
+ * pegava qualquer mapa da temporada.
+ */
+async function poolDaTemporada(
+  seasonId: string,
+  mode: RankedMode,
+  m: EntityManager = dataSource.manager,
+): Promise<MapaDoPool[]> {
   return (await m.query(
     `select m."id", m."nome"
        from "season_maps" sm
        join "maps" m on m."id" = sm."mapId"
       where sm."seasonId" = $1
+        and m."ativo"
+        and $2 = any(m."modos")
       order by sm."ordem" asc, m."nome" asc`,
-    [seasonId],
+    [seasonId, mode],
   )) as MapaDoPool[]
 }
 
@@ -269,7 +286,7 @@ async function cobrarTurnosVencidos(app: FastifyInstance) {
       const lobby = await m.findOne(Lobby, { where: { id: aberto.id }, lock: { mode: 'pessimistic_write' } })
       if (!lobby) return
 
-      const pool = await poolDaTemporada(lobby.seasonId, m)
+      const pool = await poolDaTemporada(lobby.seasonId, lobby.mode, m)
       const novo = tickDeBans(lobby, pool.map((p) => p.id), new Date(), config.RANKED_BAN_TURNO_SEG)
       if (!novo) return
 
@@ -810,7 +827,7 @@ export default async function rankedRoutes(app: FastifyInstance, opcoes: OpcoesR
       lobby.seasonId,
       jogadores.map((j) => j.accountId),
     )
-    const pool = await poolDaTemporada(lobby.seasonId)
+    const pool = await poolDaTemporada(lobby.seasonId, lobby.mode)
 
     return vistaDoLobby(
       lobby,
@@ -836,7 +853,7 @@ export default async function rankedRoutes(app: FastifyInstance, opcoes: OpcoesR
       const eu = await m.findOne(LobbyPlayer, { where: { lobbyId: lobby.id, accountId: request.account.id } })
       if (!eu) return NAO_ENCONTRADO
 
-      const pool = await poolDaTemporada(lobby.seasonId, m)
+      const pool = await poolDaTemporada(lobby.seasonId, lobby.mode, m)
       const ban = aplicarBan(
         lobby,
         eu.time,

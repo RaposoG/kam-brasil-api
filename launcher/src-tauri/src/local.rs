@@ -48,6 +48,31 @@ fn modified_ms(meta: &std::fs::Metadata) -> u64 {
 /// dentro — `TKMSavesCollection.Path` (`src/res/KM_Saves.pas:563`) monta assim, e
 /// o próprio scanner do jogo (`:762-764`) procura o trio dentro do diretório.
 /// Varrer `*.sav` solto na raiz devolve lista vazia em toda instalação real.
+/// Saves que o jogo cria sozinho e que o jogador nunca pediu.
+///
+/// Os nomes vêm do próprio jogo (`src/common/KM_Defaults.pas`): `AUTOSAVE_SAVE_NAME`,
+/// `AUTOSAVE_AFTER_PT_END_SAVE_NAME`, `BASESAVE_NAME`, `CRASHREPORT_SAVE_NAME`,
+/// `RETURN_TO_LOBBY_SAVE` e `DOWNLOADED_LOBBY_SAVE`. Copiar a regra do jogo, e não
+/// inventar uma, é o que faz a lista continuar certa quando ele mudar.
+const SAVES_AUTOMATICOS: [&str; 4] = ["basesave", "crashreport", "paused", "downloaded"];
+
+/// O único que é PREFIXO: os arquivos reais são `autosave01`..`autosave50`, e
+/// `autosave_after_pt_end` cai aqui também.
+const PREFIXO_AUTOSAVE: &str = "autosave";
+
+/// Save criado pelo jogo, não pelo jogador?
+///
+/// Compara em minúsculas porque o nome vem do disco, e o Windows não distingue
+/// caixa em nome de pasta. `autosave` é prefixo: os arquivos reais são
+/// `autosave01`..`autosave50`.
+/// Nome EXATO para os reservados, prefixo só para `autosave`. Comparar tudo por
+/// prefixo faria sumir um save do jogador chamado "Downloaded Map Battle" —
+/// filtro que come dado do usuário é pior que filtro que deixa passar lixo.
+fn e_save_automatico(nome: &str) -> bool {
+    let n = nome.to_ascii_lowercase();
+    n.starts_with(PREFIXO_AUTOSAVE) || SAVES_AUTOMATICOS.contains(&n.as_str())
+}
+
 fn scan_saves(dir: &Path, mode: &str, out: &mut Vec<ReplayEntry>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
@@ -57,6 +82,13 @@ fn scan_saves(dir: &Path, mode: &str, out: &mut Vec<ReplayEntry>) {
         }
 
         let Some(name) = pasta.file_name().and_then(|s| s.to_str()) else { continue };
+
+        // A tela é de partidas jogadas, não de estado interno da engine. Sem
+        // isto os cinco autosaves da última partida enterram os replays de
+        // verdade — e nenhum deles é uma partida completa para enviar.
+        if e_save_automatico(name) {
+            continue;
+        }
 
         // O `.sav` é o que faz do diretório um save. Sem ele não há o que listar
         // — é o caso do `SavesMP/basesave/`, que é estado interno da engine e
@@ -238,5 +270,36 @@ mod tests {
         assert_eq!(maps[2].mode, "SP");
 
         let _ = std::fs::remove_dir_all(&game);
+    }
+}
+
+#[cfg(test)]
+mod filtro_de_saves {
+    use super::e_save_automatico;
+
+    #[test]
+    fn saves_do_jogo_ficam_de_fora() {
+        // Nomes tirados de KM_Defaults.pas. `autosave` é prefixo numerado.
+        for n in [
+            "autosave01", "AUTOSAVE05", "autosave50", "autosave_after_pt_end",
+            "basesave", "crashreport", "paused", "DOWNLOADED",
+        ] {
+            assert!(e_save_automatico(n), "{n} deveria ser filtrado");
+        }
+    }
+
+    #[test]
+    fn partida_do_jogador_fica() {
+        // O jogo nomeia assim a partida salva: mapa + data + numero.
+        for n in [
+            "Cold Water 8P 2026-08-24 #2",
+            "Blood and Ice 2026-08-24 #1",
+            "minha partida",
+            // Prefixo cego comeria estes, e eles sao do jogador.
+            "Downloaded Map Battle",
+            "Paused River",
+        ] {
+            assert!(!e_save_automatico(n), "{n} deveria aparecer na lista");
+        }
     }
 }
