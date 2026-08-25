@@ -387,7 +387,21 @@ export default async function rankedInternalRoutes(app: FastifyInstance) {
       )
 
     const partida = await matches().findOne({ where: { id: id.data } })
-    if (!partida) return reply.code(404).send('unknown match')
+    if (!partida) {
+      // Sai calado por padrão: estas rotas são `logLevel: 'silent'` porque a
+      // querystring carrega o segredo. Mas ESTE 404 não é ruído -- ele diz que
+      // uma partida foi jogada e o resultado se perdeu.
+      //
+      // Aconteceu: oito jogadores, 15095 ticks, a reserva apagada do banco no
+      // meio, e nenhuma linha em lugar nenhum explicando por quê. O servidor
+      // dedicado não reenvia (e não deveria: a linha não voltaria), então se
+      // não registrar aqui, ninguém fica sabendo nunca.
+      app.log.warn(
+        { match: id.data, vencedor: vencedor.success ? vencedor.data : null, ticks },
+        'reporte de partida INEXISTENTE: uma partida foi jogada e o resultado se perdeu',
+      )
+      return reply.code(404).send('unknown match')
+    }
 
     const agora = new Date()
     const fechou = await matches().update(

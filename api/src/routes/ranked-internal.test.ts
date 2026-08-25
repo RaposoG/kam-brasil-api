@@ -312,3 +312,20 @@ test('build sem allowlist configurado aceita qualquer CRC', async () => {
 
   expect(res.body).toBe('ok')
 })
+
+test('reporte de partida inexistente aparece no log como aviso', async () => {
+  // Aconteceu de verdade: oito jogadores, 15095 ticks, resultado perdido, e a
+  // unica linha era um `info` dizendo "reporte repetido" -- que estava errado.
+  // `affected = 0` tem duas causas, e so uma delas e rotina.
+  db.matches.linhas.length = 0
+
+  const avisos: string[] = []
+  app.log.warn = ((_o: unknown, msg?: string) => avisos.push(String(msg))) as typeof app.log.warn
+
+  const res = await app.inject({ url: REPORTE })
+
+  // 404 e a resposta certa: a partida nao existe mesmo. O que faltava era o
+  // aviso -- estas rotas sao silenciosas de proposito, e este caso nao pode ser.
+  expect(res.statusCode).toBe(404)
+  expect(avisos.join(' ')).toContain('INEXISTENTE')
+})
