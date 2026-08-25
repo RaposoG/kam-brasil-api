@@ -286,7 +286,7 @@ test('rooms devolve uma linha por sala reservada, no formato que o Pascal parsei
   // `map=` junto do `mapcrc=`: sem o nome do arquivo o servidor dedicado não
   // difunde o mkMapSelect, e a sala travada abre no mapa que o host escolher.
   expect(res.body).toBe(
-    `room=3;match=${PARTIDA};mapcrc=A1B2C3D4;map=Cursed Ravine;pt=15;spd=1;lock=1;p=Alfa:A:1;p=Beta:B:2`,
+    `room=3;match=${PARTIDA};mapcrc=A1B2C3D4;map=Cursed Ravine;pt=60;spd=1.4;spda=1.2;lock=1;p=Alfa:A:1;p=Beta:B:2`,
   )
 })
 
