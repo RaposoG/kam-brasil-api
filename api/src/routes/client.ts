@@ -14,8 +14,9 @@ const publishSchema = z.object({
   gameRevision: z.string().min(1).max(32),
   /**
    * Tag da GitHub Release que carrega os binários compilados
-   * (`KaM_Remake.exe` e `RXXPacker.exe`). O resto da árvore a API monta
-   * sozinha — ver release-builder.ts.
+   * (`KaM_Remake.exe`, `RXXPacker.exe`) e o `assets.zip` com sprites, som,
+   * música e paletas prontos. O resto da árvore a API monta sozinha — ver
+   * release-builder.ts.
    */
   binariesTag: z.string().min(1).max(64),
   notes: z.string().max(4000).default(''),
@@ -29,14 +30,17 @@ interface ManifestFile {
 }
 
 /**
- * Nunca entram numa release: ou vêm do Knights and Merchants original (e são
- * gerados na máquina do jogador), ou são lixo de build, ou são estado local
- * daquele jogador.
+ * Nunca entram numa release: são lixo de build, ou estado local daquele
+ * jogador.
+ *
+ * `data/sprites/`, `data/sfx/` e `music/` estavam aqui e NAO estao mais.
+ * Ficaram de fora enquanto vinham do Knights and Merchants original de cada
+ * jogador — agora vem prontos no `assets.zip` (ver release-builder.ts) e
+ * PRECISAM entrar no manifesto. Devolver qualquer um deles a esta lista
+ * publica uma release sem sprites, sem som ou sem musica, e o `skipped` da
+ * resposta pula de zero direto para milhares.
  */
 const EXCLUDED_PREFIXES = [
-  'data/sprites/', // gerado pelo RXXPacker a partir dos .rx do jogador
-  'data/sfx/', // sons do jogo original
-  'music/', // músicas do jogo original
   'logs/',
   'saves/',
   'savesmp/',
@@ -67,13 +71,14 @@ const EXCLUDED_FILES = [
  */
 const EXCLUDED_EXTENSIONS = ['.dcu', '.o', '.ppu', '.identcache', '.drc']
 
-function isExcluded(relPath: string): boolean {
+export function isExcluded(relPath: string): boolean {
   const lower = relPath.toLowerCase()
   if (EXCLUDED_PREFIXES.some((p) => lower.startsWith(p))) return true
   if (EXCLUDED_FILES.includes(lower)) return true
   if (EXCLUDED_EXTENSIONS.some((e) => lower.endsWith(e))) return true
-  // Paletas e .dat de gfx tambem vem do original
-  if (lower.startsWith('data/gfx/') && /\.(bbm|lbm|dat)$/.test(lower)) return true
+  // Aqui havia um descarte das paletas (`data/gfx/*.bbm|lbm|dat`), pelo mesmo
+  // motivo dos sprites: vinham do original. Agora vem no assets.zip, e o
+  // engine nao abre sem `data/gfx/pal0.bbm` (KM_Resource.pas:161).
   return false
 }
 
