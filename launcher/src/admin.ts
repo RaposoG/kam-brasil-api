@@ -11,7 +11,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import type { RankedMode, Team } from "./api";
+import type { ChamadoEstado, ChamadoMensagem, ChamadoTipo, RankedMode, Team } from "./api";
 
 /** O que a API responde quando a rota não existe — ver `chamar` abaixo. */
 const ROTA_AUSENTE = "Not Found";
@@ -383,3 +383,32 @@ export const tamanho = (bytes: number) =>
     : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
 export const MODOS: RankedMode[] = ["1v1", "2v2", "3v3", "4v4"];
+
+// ---- chamados de suporte (caixa de entrada do painel) ----
+
+
+export interface ChamadoDoPainel {
+  id: string;
+  tipo: ChamadoTipo;
+  titulo: string;
+  estado: ChamadoEstado;
+  criadoEm: string;
+  ultimaMensagemEm: string;
+  autor: string;
+  autorEmail: string;
+}
+
+export const listarChamados = async (estado?: ChamadoEstado) =>
+  (await chamar<{ chamados: ChamadoDoPainel[] }>("GET", `/admin/chamados${query({ estado })}`)).chamados;
+
+export const verChamado = (id: string) =>
+  chamar<{
+    chamado: Omit<ChamadoDoPainel, "autor" | "autorEmail">;
+    autor: { nickname: string; email: string } | null;
+    mensagens: ChamadoMensagem[];
+  }>("GET", `/admin/chamados/${id}`);
+
+export const responderChamado = (id: string, mensagem: string) =>
+  chamar<{ mensagem: ChamadoMensagem; estado: ChamadoEstado }>("POST", `/admin/chamados/${id}/mensagens`, { mensagem });
+
+export const fecharChamado = (id: string) => chamar<{ ok: boolean }>("POST", `/admin/chamados/${id}/fechar`);

@@ -40,6 +40,8 @@ const gravadas: Record<string, unknown>[] = []
 // arquivo de teste estourar com "Export named 'seasons' not found". Daí o
 // `seasons` aqui, que catalog.ts busca e este teste não usa.
 await mock.module('../data-source.ts', () => ({
+  chamados: () => ({}),
+  chamadoMensagens: () => ({}),
   dataSource: {
     query: async () => linhasDeMeus,
   },

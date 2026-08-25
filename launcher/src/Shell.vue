@@ -16,6 +16,7 @@ import Mapas from "./screens/Mapas.vue";
 import Temporada from "./screens/Temporada.vue";
 import Conquistas from "./screens/Conquistas.vue";
 import Noticias from "./screens/Noticias.vue";
+import Suporte from "./screens/Suporte.vue";
 import Config from "./screens/Config.vue";
 import Doacoes from "./screens/Doacoes.vue";
 import AdminMapas from "./screens/AdminMapas.vue";
@@ -23,6 +24,7 @@ import AdminTemporadas from "./screens/AdminTemporadas.vue";
 import AdminJogadores from "./screens/AdminJogadores.vue";
 import AdminDenuncias from "./screens/AdminDenuncias.vue";
 import AdminPartidas from "./screens/AdminPartidas.vue";
+import AdminChamados from "./screens/AdminChamados.vue";
 
 const props = defineProps<{ account: Account }>();
 defineEmits<{ sair: [] }>();
@@ -34,17 +36,18 @@ provide("account", props.account);
 
 type Tela =
   | "home" | "ranqueada" | "lobby" | "perfil" | "ranking" | "partidas" | "replays"
-  | "mapas" | "temporada" | "conquistas" | "noticias" | "config" | "doacoes"
-  | "adminMapas" | "adminTemporadas" | "adminJogadores" | "adminDenuncias" | "adminPartidas";
+  | "mapas" | "temporada" | "conquistas" | "noticias" | "suporte" | "config" | "doacoes"
+  | "adminMapas" | "adminTemporadas" | "adminJogadores" | "adminDenuncias" | "adminPartidas"
+  | "adminChamados";
 
 // `lobby` não tem item de menu: chega-se a ele pelo pareamento, e um menu para
 // uma sala que quase nunca existe seria botão morto na lateral.
 const TELAS = {
   home: Home, ranqueada: Ranqueada, lobby: Lobby, perfil: Perfil, ranking: Ranking,
   partidas: Partidas, replays: Replays, mapas: Mapas, temporada: Temporada,
-  conquistas: Conquistas, noticias: Noticias, config: Config, doacoes: Doacoes,
+  conquistas: Conquistas, noticias: Noticias, suporte: Suporte, config: Config, doacoes: Doacoes,
   adminMapas: AdminMapas, adminTemporadas: AdminTemporadas, adminJogadores: AdminJogadores,
-  adminDenuncias: AdminDenuncias, adminPartidas: AdminPartidas,
+  adminDenuncias: AdminDenuncias, adminPartidas: AdminPartidas, adminChamados: AdminChamados,
 };
 
 const tela = ref<Tela>("home");
@@ -73,7 +76,13 @@ const GRUPOS: { titulo: string; itens: { id: Tela; label: string; tag: string }[
       { id: "conquistas", label: "CONQUISTAS", tag: "" },
     ],
   },
-  { titulo: "COMUNIDADE", itens: [{ id: "noticias", label: "NOTÍCIAS", tag: "" }] },
+  {
+    titulo: "COMUNIDADE",
+    itens: [
+      { id: "noticias", label: "NOTÍCIAS", tag: "" },
+      { id: "suporte", label: "SUPORTE", tag: "" },
+    ],
+  },
 ];
 
 /**
@@ -91,6 +100,7 @@ const ADMIN: (typeof GRUPOS)[number] = {
     { id: "adminTemporadas", label: "TEMPORADAS", tag: "" },
     { id: "adminJogadores", label: "JOGADORES", tag: "" },
     { id: "adminDenuncias", label: "DENÚNCIAS", tag: "" },
+    { id: "adminChamados", label: "CHAMADOS", tag: "" },
     { id: "adminPartidas", label: "PARTIDAS", tag: "" },
   ],
 };

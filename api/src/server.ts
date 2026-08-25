@@ -22,6 +22,7 @@ import matchesRoutes from './routes/matches.ts'
 import replayRoutes from './routes/replay.ts'
 import mapasRoutes from './routes/mapas.ts'
 import reportsRoutes from './routes/reports.ts'
+import chamadosRoutes from './routes/chamados.ts'
 import tempoRealRoutes from './ranked/tempo-real.ts'
 
 const app = Fastify({
@@ -93,6 +94,8 @@ await app.register(replayRoutes)
 // multipart do upload não pode vazar para as outras rotas.
 await app.register(mapasRoutes)
 await app.register(reportsRoutes)
+// Chamados de suporte (problema/sugestão/ajuda) — jogador e painel.
+await app.register(chamadosRoutes)
 // O canal de tempo real da sessão (`wss://.../tempo-real`, mais o
 // `/ranked/tempo-real` antigo enquanto houver launcher 1.4.x em campo).
 //

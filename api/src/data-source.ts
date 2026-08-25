@@ -29,6 +29,9 @@ import { MatchReports1786000000001 } from './migrations/1786000000001-match-repo
 import { Social1786000000002 } from './migrations/1786000000002-social.ts'
 import { Ranked1786000000003 } from './migrations/1786000000003-ranked.ts'
 import { Reports1786000000004 } from './migrations/1786000000004-reports.ts'
+import { Chamado } from './entities/chamado.ts'
+import { ChamadoMensagem } from './entities/chamado-mensagem.ts'
+import { Chamados1786000000006 } from './migrations/1786000000006-chamados.ts'
 import { MapCatalog1786000000005 } from './migrations/1786000000005-map-catalog.ts'
 
 export const dataSource = new DataSource({
@@ -54,6 +57,8 @@ export const dataSource = new DataSource({
     Match,
     MatchPlayer,
     Report,
+    Chamado,
+    ChamadoMensagem,
   ],
   // Nunca true: o schema é versionado por migration, inclusive em desenvolvimento.
   synchronize: false,
@@ -68,6 +73,7 @@ export const dataSource = new DataSource({
     Ranked1786000000003,
     Reports1786000000004,
     MapCatalog1786000000005,
+    Chamados1786000000006,
   ],
   logging: config.isDev ? ['error', 'warn'] : ['error'],
 })
@@ -91,3 +97,5 @@ export const lobbyPlayers = () => dataSource.getRepository(LobbyPlayer)
 export const matches = () => dataSource.getRepository(Match)
 export const matchPlayers = () => dataSource.getRepository(MatchPlayer)
 export const reports = () => dataSource.getRepository(Report)
+export const chamados = () => dataSource.getRepository(Chamado)
+export const chamadoMensagens = () => dataSource.getRepository(ChamadoMensagem)

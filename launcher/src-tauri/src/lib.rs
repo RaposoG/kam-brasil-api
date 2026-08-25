@@ -5,6 +5,7 @@ mod install;
 mod local;
 mod mapas;
 mod matches;
+mod chamados;
 mod ranked;
 mod ranked_ws;
 mod replay;
@@ -77,6 +78,11 @@ pub fn run() {
             ranked_ws::ranked_ws_start,
             ranked_ws::ranked_ws_stop,
             matches::matches_history,
+            chamados::chamados_list,
+            chamados::chamado_abrir,
+            chamados::chamado_ver,
+            chamados::chamado_responder,
+            chamados::chamado_fechar,
             matches::account_stats,
             replay::upload_replay,
             local::list_replays,

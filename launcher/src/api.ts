@@ -204,6 +204,49 @@ export const chatFetch = (after?: number): Promise<ChatMessage[]> =>
 
 export const chatSend = (body: string): Promise<ChatMessage> => invoke('chat_send', { body })
 
+// ---- chamados de suporte ----
+
+export type ChamadoTipo = 'problema' | 'sugestao' | 'ajuda'
+/** `aberto` = bola com a equipe · `respondido` = bola com o jogador · `fechado`. */
+export type ChamadoEstado = 'aberto' | 'respondido' | 'fechado'
+
+export interface Chamado {
+  id: string
+  tipo: ChamadoTipo
+  titulo: string
+  estado: ChamadoEstado
+  criadoEm: string
+  ultimaMensagemEm: string
+}
+
+export interface ChamadoMensagem {
+  id: number
+  deQuem: string
+  daEquipe: boolean
+  body: string
+  em: string
+}
+
+export const chamadosList = (): Promise<{ chamados: Chamado[] }> => invoke('chamados_list')
+
+export const chamadoAbrir = (
+  tipo: ChamadoTipo,
+  titulo: string,
+  mensagem: string,
+): Promise<{ chamado: Chamado; mensagem: ChamadoMensagem }> =>
+  invoke('chamado_abrir', { tipo, titulo, mensagem })
+
+export const chamadoVer = (id: string): Promise<{ chamado: Chamado; mensagens: ChamadoMensagem[] }> =>
+  invoke('chamado_ver', { id })
+
+export const chamadoResponder = (
+  id: string,
+  mensagem: string,
+): Promise<{ mensagem: ChamadoMensagem; estado: ChamadoEstado }> =>
+  invoke('chamado_responder', { id, mensagem })
+
+export const chamadoFechar = (id: string): Promise<{ ok: boolean }> => invoke('chamado_fechar', { id })
+
 /** "Estou aberto" — alimenta o lastSeenAt que faz o online dos amigos existir. */
 export const presenceHeartbeat = (): Promise<void> => invoke('presence_heartbeat')
 

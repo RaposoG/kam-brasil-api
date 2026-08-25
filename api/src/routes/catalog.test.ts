@@ -21,6 +21,8 @@ let ativa: Record<string, unknown> | null = null
 // arquivo de teste estourar com "Export named 'accounts' not found". Por isso o
 // que reports.ts busca em data-source também aparece aqui, sem uso.
 await mock.module('../data-source.ts', () => ({
+  chamados: () => ({}),
+  chamadoMensagens: () => ({}),
   seasons: () => ({ findOne: async () => ativa }),
   dataSource: { query: async () => [] },
   accounts: () => ({}),
