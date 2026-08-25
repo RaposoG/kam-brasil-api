@@ -53,8 +53,11 @@ import {
  *
  * ponytail: constantes. Viram coluna da temporada se um dia variarem por modo.
  */
-const PEACETIME_MINUTOS = 15
-const VELOCIDADE = 1
+const PEACETIME_MINUTOS = 60
+/** Durante a paz. */
+const VELOCIDADE = 1.4
+/** Depois que a paz acaba: mais devagar, porque a partir daí há combate. */
+const VELOCIDADE_APOS_PAZ = 1.2
 
 /**
  * Suspensão da fila por abandono, por ocorrência (Decisões do dono, §3):
@@ -329,6 +332,7 @@ export default async function rankedInternalRoutes(app: FastifyInstance) {
           ...(mapa ? [`map=${mapa.nome.replace(/[\s;]+/g, ' ').trim()}`] : []),
           `pt=${PEACETIME_MINUTOS}`,
           `spd=${VELOCIDADE}`,
+          `spda=${VELOCIDADE_APOS_PAZ}`,
           'lock=1',
           ...jogadores,
         ].join(';'),
