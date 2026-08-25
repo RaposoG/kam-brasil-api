@@ -13,8 +13,12 @@ ENV NODE_ENV=production
 
 # git: a API monta as releases clonando os repositorios de conteudo (mapas,
 # textos, sprites da comunidade) em vez de receber meio giga por upload.
+#
+# unzip e pacote separado do zip no Debian, e nao vem de graca junto: e ele que
+# abre o assets.zip (sprites, som, musica, paletas) da GitHub Release. Sem ele a
+# publicacao morre no meio, depois de ja ter clonado tudo.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates zip \
+ && apt-get install -y --no-install-recommends git ca-certificates zip unzip \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=deps /app/node_modules ./node_modules
