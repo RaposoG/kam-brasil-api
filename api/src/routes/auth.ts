@@ -109,6 +109,16 @@ export default async function authRoutes(app: FastifyInstance) {
   })
 
   app.get('/auth/me', { onRequest: [app.authenticate] }, async (request) => {
+    // Reavaliado aqui além do login porque o launcher restaura a sessão salva
+    // por meses sem nunca logar de novo — entrar (ou sair) de ADMIN_EMAILS
+    // tem que valer no próximo boot do launcher, não no próximo login que
+    // talvez nunca aconteça. Save só quando muda, para não escrever à toa na
+    // rota mais chamada da API.
+    const devia = isAdminEmail(request.account.email)
+    if (request.account.isAdmin !== devia) {
+      request.account.isAdmin = devia
+      await accounts().save(request.account)
+    }
     return { account: toPublicAccount(request.account) }
   })
 
