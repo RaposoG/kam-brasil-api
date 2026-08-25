@@ -160,7 +160,9 @@ function aplicar(novo: LobbyView) {
 // poll ter respondido primeiro.
 const ligado = useTempoReal((e) => {
   if (e.tipo === "fila") lobbyId.value = e.lobbyId ?? lobbyId.value;
-  else if (e.id === lobbyId.value) aplicar(e);
+  // O canal carrega mais que fila e lobby (o aviso de catálogo de mapas, por
+  // exemplo). Sem conferir o `tipo`, o `id` de outro evento chegaria aqui.
+  else if (e.tipo === "lobby" && e.id === lobbyId.value) aplicar(e);
 });
 
 watch(ligado, (vivo) => {

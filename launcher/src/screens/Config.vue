@@ -5,15 +5,11 @@ import { getVersion } from "@tauri-apps/api/app";
 import { type Account, apiBase } from "../api";
 import {
   atualizarLauncher,
-  busy,
   check,
   checking,
   erro,
-  escolherOriginal,
   launcherNova,
-  original,
   pastaJogo,
-  prepararAssets,
   procurarLauncher,
   refresh,
   versaoInstalada,
@@ -53,13 +49,6 @@ const linhas = computed(() => [
     executar: abrirPasta,
   },
   {
-    nome: "Cópia original do KaM",
-    valor: original.value ? `${original.value.path} (${original.value.source})` : "não encontrada",
-    acao: "REVER",
-    ocupado: false,
-    executar: escolherOriginal,
-  },
-  {
     nome: "Verificar arquivos",
     valor: check.value?.needsUpdate
       ? `atualização disponível: ${check.value.latest?.version}`
@@ -78,13 +67,6 @@ const linhas = computed(() => [
     acao: launcherNova.value ? "ATUALIZAR" : "VERIFICAR",
     ocupado: false,
     executar: launcherNova.value ? atualizarLauncher : procurarLauncher,
-  },
-  {
-    nome: "Regerar assets do original",
-    valor: original.value ? "leva alguns minutos" : "precisa da cópia original primeiro",
-    acao: "REGERAR",
-    ocupado: busy.value || !original.value,
-    executar: prepararAssets,
   },
 ]);
 </script>

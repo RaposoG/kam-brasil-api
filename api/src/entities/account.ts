@@ -61,5 +61,9 @@ export function toPublicAccount(account: Account) {
     email: account.email,
     nickname: account.nickname,
     createdAt: account.createdAt,
+    // O launcher lê isto para decidir se mostra o painel. É só a chave do
+    // menu: quem manda é o requireAdmin de routes/admin.ts, que confere a
+    // coluna a cada requisição — mentir aqui não abre rota nenhuma.
+    isAdmin: account.isAdmin,
   }
 }

@@ -15,9 +15,8 @@ gameserver/    Dockerfile          compila e roda o KaM_DedicatedServer
 
 ## Como as peças conversam
 
-O jogador instala **só o launcher**. Ele cria a conta, baixa o jogo da API, gera
-localmente os arquivos derivados da cópia original de Knights and Merchants e
-abre o jogo já autenticado.
+O jogador instala **só o launcher**. Ele cria a conta, baixa o jogo da API —
+completo, sem depender de nenhum outro jogo na máquina — e abre já autenticado.
 
 ```
 launcher  ──HTTPS──▶  API          conta, releases, download
@@ -36,10 +35,13 @@ ICS sem `SslContext` — não existe uma linha de SSL nele. Por isso a lista de
 servidores trafega em HTTP puro, o ticket de partida vai na query string, e a
 rota que o valida só aceita `127.0.0.1`.
 
-**Nada que veio do jogo comercial é distribuído.** Sprites, sons, músicas e os
-`.dat` de casas e unidades ficam de fora das releases: são gerados na máquina do
-jogador a partir da cópia que ele possui. É por isso que o launcher exige achar o
-Knights and Merchants original antes de deixar jogar.
+**O que veio do jogo comercial é empacotado uma vez, não em cada máquina.**
+Sprites, sons, músicas e os `.dat` de casas e unidades entram na release já
+prontos — é o mesmo que o instalador do KaM Remake faz. Quem precisa do Knights
+and Merchants original é quem monta a release, não quem joga. Enquanto era o
+contrário, cada jogador convertia na própria máquina e cada instalação saía
+diferente da outra: sprites sem a camada de alta resolução, ícones errados, som e
+música variando de pessoa para pessoa.
 
 ## Rodando local
 
@@ -113,5 +115,5 @@ O jogo é o **KaM Remake**, de [reyandme](https://github.com/reyandme/kam_remake
 colaboradores. Este projeto acrescenta uma camada de contas e servidores para a
 comunidade brasileira; o mérito da engine é inteiramente deles.
 
-*Knights and Merchants* é propriedade de seus respectivos detentores. Nada do
-jogo original é redistribuído aqui — você precisa possuir uma cópia.
+*Knights and Merchants* é propriedade de seus respectivos detentores. Os
+arquivos do jogo que acompanham a release (sprites, sons e músicas) vêm dele.

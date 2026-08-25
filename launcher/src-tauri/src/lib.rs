@@ -1,14 +1,13 @@
-mod assets;
+mod admin;
 mod auth;
 mod game;
 mod install;
 mod local;
+mod mapas;
 mod matches;
-mod original;
 mod ranked;
 mod ranked_ws;
 mod replay;
-mod speech;
 mod webview2;
 mod social;
 
@@ -38,12 +37,9 @@ pub fn run() {
             install::install_update,
             install::map_ready,
             install::download_map,
+            mapas::mapas_sync,
             game::game_status,
             game::launch_game,
-            original::find_original_game,
-            original::check_original_game,
-            assets::assets_status,
-            assets::generate_assets,
             social::friends_list,
             social::friend_add,
             social::friend_respond,
@@ -64,6 +60,9 @@ pub fn run() {
             replay::upload_replay,
             local::list_replays,
             local::list_local_maps,
+            admin::admin_call,
+            admin::admin_map_folder,
+            admin::admin_map_upload,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

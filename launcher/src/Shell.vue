@@ -2,6 +2,8 @@
 import { computed, onMounted, onUnmounted, provide, ref } from "vue";
 import { type Account, presenceHeartbeat } from "./api";
 import { iniciar } from "./install";
+import { sincronizarMapas } from "./mapas";
+import { useTempoReal } from "./tempo-real";
 import Dock from "./Dock.vue";
 import Home from "./screens/Home.vue";
 import Perfil from "./screens/Perfil.vue";
@@ -16,6 +18,11 @@ import Conquistas from "./screens/Conquistas.vue";
 import Noticias from "./screens/Noticias.vue";
 import Config from "./screens/Config.vue";
 import Doacoes from "./screens/Doacoes.vue";
+import AdminMapas from "./screens/AdminMapas.vue";
+import AdminTemporadas from "./screens/AdminTemporadas.vue";
+import AdminJogadores from "./screens/AdminJogadores.vue";
+import AdminDenuncias from "./screens/AdminDenuncias.vue";
+import AdminPartidas from "./screens/AdminPartidas.vue";
 
 const props = defineProps<{ account: Account }>();
 defineEmits<{ sair: [] }>();
@@ -27,7 +34,8 @@ provide("account", props.account);
 
 type Tela =
   | "home" | "ranqueada" | "lobby" | "perfil" | "ranking" | "partidas" | "replays"
-  | "mapas" | "temporada" | "conquistas" | "noticias" | "config" | "doacoes";
+  | "mapas" | "temporada" | "conquistas" | "noticias" | "config" | "doacoes"
+  | "adminMapas" | "adminTemporadas" | "adminJogadores" | "adminDenuncias" | "adminPartidas";
 
 // `lobby` não tem item de menu: chega-se a ele pelo pareamento, e um menu para
 // uma sala que quase nunca existe seria botão morto na lateral.
@@ -35,6 +43,8 @@ const TELAS = {
   home: Home, ranqueada: Ranqueada, lobby: Lobby, perfil: Perfil, ranking: Ranking,
   partidas: Partidas, replays: Replays, mapas: Mapas, temporada: Temporada,
   conquistas: Conquistas, noticias: Noticias, config: Config, doacoes: Doacoes,
+  adminMapas: AdminMapas, adminTemporadas: AdminTemporadas, adminJogadores: AdminJogadores,
+  adminDenuncias: AdminDenuncias, adminPartidas: AdminPartidas,
 };
 
 const tela = ref<Tela>("home");
@@ -66,6 +76,27 @@ const GRUPOS: { titulo: string; itens: { id: Tela; label: string; tag: string }[
   { titulo: "COMUNIDADE", itens: [{ id: "noticias", label: "NOTÍCIAS", tag: "" }] },
 ];
 
+/**
+ * O painel só existe para quem tem o papel. Esconder o menu é conforto, não
+ * segurança: o `isAdmin` vem da API junto da conta, e quem realmente decide é o
+ * `requireAdmin` de lá, conferido a cada requisição — um `isAdmin` forjado aqui
+ * abriria as telas e receberia 403 em cada botão.
+ *
+ * A ordem é a da utilidade: mapas primeiro, que é o que muda toda semana.
+ */
+const ADMIN: (typeof GRUPOS)[number] = {
+  titulo: "ADMINISTRAÇÃO",
+  itens: [
+    { id: "adminMapas", label: "CATÁLOGO", tag: "" },
+    { id: "adminTemporadas", label: "TEMPORADAS", tag: "" },
+    { id: "adminJogadores", label: "JOGADORES", tag: "" },
+    { id: "adminDenuncias", label: "DENÚNCIAS", tag: "" },
+    { id: "adminPartidas", label: "PARTIDAS", tag: "" },
+  ],
+};
+
+const grupos = computed(() => (props.account.isAdmin ? [...GRUPOS, ADMIN] : GRUPOS));
+
 // Fora dos GRUPOS de propósito: doar não é uma seção do jogo, e enfiar a aba
 // entre PERFIL e RANKING a faria virar ruído no meio da navegação. Aqui ela é
 // um item à parte, no fim, com destaque próprio.
@@ -92,8 +123,26 @@ function ir(id: string) {
 // cada 60 s com folga. Falha é silenciosa — sem rede, você só aparece offline.
 let heartbeat = 0;
 
+/**
+ * O aviso de que o admin mexeu no catálogo de mapas chega por aqui.
+ *
+ * A assinatura é do Shell, não das telas de ranqueada, e isso é o ponto: o
+ * canal precisa estar de pé em QUALQUER aba, senão quem está na Home nunca
+ * recebe o aviso. Como o composable conta assinantes, esta assinatura mantém o
+ * socket vivo pela sessão inteira e as telas de fila e lobby só se somam a ela.
+ *
+ * Quem estava offline não perde nada: a sincronia do boot, logo abaixo, cobre
+ * tudo que mudou enquanto o launcher estava fechado.
+ */
+useTempoReal((e) => {
+  if (e.tipo === "mapas") sincronizarMapas(e.assinatura);
+});
+
 onMounted(() => {
   iniciar();
+  // Falha é silenciosa de propósito: sem catálogo o jogador continua com os
+  // mapas que já tem, e a tela de Cartografia é quem conta o que houve.
+  sincronizarMapas();
   const bater = () => presenceHeartbeat().catch(() => {});
   bater();
   heartbeat = window.setInterval(bater, 60_000);
@@ -117,7 +166,7 @@ onUnmounted(() => clearInterval(heartbeat));
       </div>
 
       <div class="menu">
-        <div v-for="g in GRUPOS" :key="g.titulo" class="grupo">
+        <div v-for="g in grupos" :key="g.titulo" class="grupo">
           <div class="grupo-titulo">{{ g.titulo }}</div>
           <button
             v-for="item in g.itens"

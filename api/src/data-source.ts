@@ -29,6 +29,7 @@ import { MatchReports1786000000001 } from './migrations/1786000000001-match-repo
 import { Social1786000000002 } from './migrations/1786000000002-social.ts'
 import { Ranked1786000000003 } from './migrations/1786000000003-ranked.ts'
 import { Reports1786000000004 } from './migrations/1786000000004-reports.ts'
+import { MapCatalog1786000000005 } from './migrations/1786000000005-map-catalog.ts'
 
 export const dataSource = new DataSource({
   type: 'postgres',
@@ -66,6 +67,7 @@ export const dataSource = new DataSource({
     Social1786000000002,
     Ranked1786000000003,
     Reports1786000000004,
+    MapCatalog1786000000005,
   ],
   logging: config.isDev ? ['error', 'warn'] : ['error'],
 })

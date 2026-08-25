@@ -3,36 +3,31 @@
  * botão JOGAR) e as Configurações. Módulo com refs no topo em vez de provide/
  * inject: a janela é uma só, e duas telas lendo o mesmo `check_update` seria
  * pedir à API a mesma coisa duas vezes.
+ *
+ * Instalar é UM passo: baixar. Sprites, sons e músicas vêm prontos na release,
+ * como no instalador do KaM Remake — quem precisa do jogo de 1998 é quem
+ * empacota, não quem joga. Enquanto era o contrário, cada jogador convertia na
+ * própria máquina e cada máquina saía com um resultado diferente.
  */
 
 import { computed, ref } from "vue";
-import { open } from "@tauri-apps/plugin-dialog";
 import {
-  type AssetProgress,
   type InstallProgress,
-  type OriginalGame,
   type UpdateCheck,
-  assetsStatus,
-  checkOriginalGame,
   checkUpdate,
-  findOriginalGame,
-  generateAssets,
   installUpdate,
   launchGame,
   launcherUpdateAvailable,
-  onAssetProgress,
   onInstallProgress,
   updateLauncher,
 } from "./api";
+import { sincronizarMapas } from "./mapas";
 
 export const busy = ref(false);
 export const checking = ref(false);
 export const erro = ref("");
 export const check = ref<UpdateCheck | null>(null);
-export const original = ref<OriginalGame | null>(null);
-export const assetsOk = ref(false);
 export const download = ref<InstallProgress | null>(null);
-export const assetStep = ref<AssetProgress | null>(null);
 export const verificadoEm = ref<number | null>(null);
 
 export const launcherNova = ref<string | null>(null);
@@ -63,7 +58,7 @@ const desdeVerificacao = () => {
 };
 
 /** Ação principal da Home, na ordem em que o fluxo exige. */
-export type Acao = "original" | "instalar" | "preparar" | "jogar" | "esperar" | "semVersao";
+export type Acao = "instalar" | "jogar" | "esperar" | "semVersao";
 
 /**
  * A barra de status e o botão herói leem daqui. Um estado só, derivado — a tela
@@ -96,21 +91,11 @@ export const status = computed(() => {
   if (busy.value && d)
     return {
       acao: "esperar" as Acao,
-      titulo: "Baixando o cliente",
+      titulo: "Baixando o jogo",
       detalhe: `${mb(d.bytes_done)} / ${mb(d.bytes_total)} MB · ${velocidade(d.bytes_per_second)} · ${restante(d)}`,
-      curto: "baixando o cliente",
+      curto: "baixando o jogo",
       pct: pct(d.bytes_done, d.bytes_total),
       indeterminado: false,
-    };
-
-  if (busy.value && assetStep.value)
-    return {
-      acao: "esperar" as Acao,
-      titulo: assetStep.value.step,
-      detalhe: assetStep.value.detail,
-      curto: "preparando assets",
-      pct: 0,
-      indeterminado: true,
     };
 
   if (busy.value)
@@ -123,23 +108,13 @@ export const status = computed(() => {
       indeterminado: true,
     };
 
-  if (!original.value)
-    return {
-      acao: "original" as Acao,
-      titulo: "Precisamos do Knights and Merchants original",
-      detalhe: "escolher a pasta manualmente",
-      curto: "aguardando cópia original",
-      pct: 0,
-      indeterminado: false,
-    };
-
   if (c?.needsUpdate && c.latest)
     return {
       acao: "instalar" as Acao,
       titulo: c.installedVersion
         ? `Atualização disponível: ${c.latest.version}`
         : "O jogo ainda não está instalado",
-      detalhe: `${mb(c.latest.totalBytes)} MB · ${c.latest.fileCount} arquivos`,
+      detalhe: `${mb(c.latest.totalBytes)} MB · ${c.latest.fileCount} arquivos · nada mais é preciso`,
       curto: c.installedVersion ? "atualização pendente" : "instalação pendente",
       pct: 0,
       indeterminado: false,
@@ -151,16 +126,6 @@ export const status = computed(() => {
       titulo: "Nenhuma versão publicada na API ainda",
       detalhe: "nada a baixar por enquanto",
       curto: "sem versão publicada",
-      pct: 0,
-      indeterminado: false,
-    };
-
-  if (!assetsOk.value)
-    return {
-      acao: "preparar" as Acao,
-      titulo: "Falta preparar os arquivos do jogo",
-      detalhe: "converte gráficos e sons da sua cópia original · leva alguns minutos",
-      curto: "assets pendentes",
       pct: 0,
       indeterminado: false,
     };
@@ -178,12 +143,8 @@ export const status = computed(() => {
 /** Rótulo do botão herói, na ordem do fluxo. */
 export const rotuloAcao = computed(() => {
   switch (status.value.acao) {
-    case "original":
-      return "ESCOLHER PASTA";
     case "instalar":
       return check.value?.installedVersion ? "ATUALIZAR" : "INSTALAR";
-    case "preparar":
-      return "PREPARAR";
     case "semVersao":
       return "JOGAR";
     case "esperar":
@@ -219,15 +180,11 @@ export function impedimentoParaFila(acao: Acao, versaoNovaDoLauncher: string | n
   switch (acao) {
     case "jogar":
       return "";
-    case "original":
-      return "Encontre o Knights and Merchants original na aba JOGAR antes de entrar na fila.";
     case "instalar":
     case "semVersao":
       return "Instale ou atualize o jogo na aba JOGAR antes de entrar na fila.";
-    case "preparar":
-      return "Prepare os arquivos do jogo na aba JOGAR antes de entrar na fila.";
     case "esperar":
-      return "Aguarde o jogo terminar de preparar — a aba JOGAR mostra o progresso.";
+      return "Aguarde o download terminar — a aba JOGAR mostra o progresso.";
   }
 }
 
@@ -240,36 +197,12 @@ export async function refresh() {
   erro.value = "";
   checking.value = true;
   try {
-    // Em paralelo, não em série: são três perguntas independentes, e uma delas
-    // vai à rede. Encadeadas, o jogador esperava a soma das três antes de a
-    // tela assentar.
-    const [c, a, o] = await Promise.all([
-      checkUpdate(),
-      assetsStatus(),
-      original.value ? Promise.resolve(original.value) : findOriginalGame(),
-    ]);
-    check.value = c;
-    assetsOk.value = a;
-    original.value = o;
+    check.value = await checkUpdate();
     verificadoEm.value = Date.now();
   } catch (e) {
     erro.value = String(e);
   } finally {
     checking.value = false;
-  }
-}
-
-export async function escolherOriginal() {
-  erro.value = "";
-  try {
-    // O open() fica DENTRO do try: quando faltava `dialog:allow-open` nas
-    // capabilities a exceção subia sem ninguém ver, e o botão parecia morto.
-    const escolhida = await open({ directory: true, title: "Onde está o Knights and Merchants?" });
-    if (typeof escolhida !== "string") return;
-    original.value = await checkOriginalGame(escolhida);
-    await refresh();
-  } catch (e) {
-    erro.value = String(e);
   }
 }
 
@@ -281,26 +214,14 @@ export async function instalar() {
   try {
     await installUpdate(release);
     await refresh();
+    // A sincronia do boot desiste enquanto o jogo não está instalado — este é o
+    // momento em que ela passa a ter onde trabalhar.
+    sincronizarMapas();
   } catch (e) {
     erro.value = String(e);
   } finally {
     busy.value = false;
     download.value = null;
-  }
-}
-
-export async function prepararAssets() {
-  if (!original.value) return;
-  busy.value = true;
-  erro.value = "";
-  try {
-    await generateAssets(original.value.path);
-    assetsOk.value = await assetsStatus();
-  } catch (e) {
-    erro.value = String(e);
-  } finally {
-    busy.value = false;
-    assetStep.value = null;
   }
 }
 
@@ -316,12 +237,8 @@ export async function jogar() {
 /** Executa o que o estado atual pede. É o clique do botão herói. */
 export function acaoPrincipal() {
   switch (status.value.acao) {
-    case "original":
-      return escolherOriginal();
     case "instalar":
       return instalar();
-    case "preparar":
-      return prepararAssets();
     case "jogar":
       return jogar();
     default:
@@ -360,7 +277,6 @@ export async function iniciar() {
   if (iniciado) return;
   iniciado = true;
   onInstallProgress((p) => (download.value = p));
-  onAssetProgress((p) => (assetStep.value = p));
 
   await refresh();
 

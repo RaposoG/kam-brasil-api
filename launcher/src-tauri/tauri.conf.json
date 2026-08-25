@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Kam Brasil",
-  "version": "1.4.4",
+  "version": "1.5.0",
   "identifier": "br.com.kambrasil.launcher",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -46,7 +46,7 @@
     "publisher": "Kam Brasil",
     "copyright": "Kam Brasil — comunidade brasileira de Knights and Merchants",
     "shortDescription": "Launcher do Kam Brasil",
-    "longDescription": "Instala, atualiza e abre o Kam Brasil. Requer o Knights and Merchants: The Peasants Rebellion original instalado.",
+    "longDescription": "Instala, atualiza e abre o Kam Brasil. O jogo vem completo — gráficos, sons e músicas inclusos. Não é preciso ter nenhum outro jogo instalado.",
     "category": "Game",
     "targets": ["msi", "nsis"],
     "icon": [

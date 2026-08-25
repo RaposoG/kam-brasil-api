@@ -32,6 +32,11 @@ pub struct Account {
     /// sem o campo (versões antigas) e isso não pode derrubar o login.
     #[serde(rename = "createdAt", default)]
     pub created_at: Option<String>,
+    /// Painel administrativo. `default` pelo mesmo motivo do `created_at`: uma
+    /// sessão restaurada de uma API antiga não traz o campo, e isso não pode
+    /// derrubar o login — sem ele a conta entra como jogador comum.
+    #[serde(rename = "isAdmin", default)]
+    pub is_admin: bool,
 }
 
 #[derive(Deserialize)]

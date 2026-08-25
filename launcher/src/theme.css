@@ -325,3 +325,94 @@ button:disabled {
 .mono {
   font-family: var(--mono);
 }
+
+/* --- painel administrativo ---
+ *
+ * As cinco telas do painel são formulário e tabela do começo ao fim. As
+ * primitivas moram aqui pelo mesmo motivo das de cima: repetidas em cada
+ * `<style scoped>`, a próxima troca de paleta esqueceria uma. */
+
+.campo {
+  padding: 7px 10px;
+  border: 1px solid var(--linha);
+  background: rgba(0, 0, 0, 0.3);
+  font-family: var(--corpo);
+  font-size: 13px;
+  color: var(--pergaminho);
+}
+.campo:focus {
+  outline: none;
+  border-color: var(--bronze);
+  box-shadow: 0 0 0 2px rgba(212, 162, 74, 0.18);
+}
+.campo::placeholder {
+  color: var(--calado-3);
+  font-style: italic;
+}
+.campo.mono {
+  letter-spacing: 0.08em;
+}
+textarea.campo {
+  resize: vertical;
+  min-height: 56px;
+}
+/* A seta do select é desenhada pelo sistema, em branco: sem isto ela some no
+   fundo escuro. `color-scheme` resolve sem imagem nem SVG embutido. */
+select.campo,
+option {
+  color-scheme: dark;
+}
+
+.rotulo-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--calado-3);
+}
+
+.tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.tabela th {
+  padding: 0 10px 8px;
+  border-bottom: 1px solid var(--linha);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  color: var(--calado-3);
+  text-align: left;
+  white-space: nowrap;
+}
+.tabela td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--linha-tenue);
+  color: var(--tenue);
+  vertical-align: middle;
+}
+.tabela tbody tr:hover td {
+  background: rgba(212, 162, 74, 0.04);
+}
+.tabela .num {
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.tabela .acoes {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/* "Nada aqui ainda" — dito uma vez, do mesmo jeito nas cinco telas. */
+.vazio {
+  margin: 18px 0 0;
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--calado-2);
+}

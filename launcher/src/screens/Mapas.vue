@@ -1,13 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { listLocalMaps } from "../api";
+import { recadoDaSincronia, sincronizando, sincronizarMapas } from "../mapas";
 
 // Mapas instalados na pasta do jogo (Maps/ e MapsMP/), lidos pelo Rust.
 // Contagem de jogadores exigiria parsear o .dat binário — fica de fora.
 const mapas = ref<Awaited<ReturnType<typeof listLocalMaps>>>([]);
 
-onMounted(async () => {
-  mapas.value = await listLocalMaps();
+const recarregar = async () => (mapas.value = await listLocalMaps());
+
+onMounted(recarregar);
+
+// A sincronia baixa e apaga pasta: a lista na tela precisa refletir isso assim
+// que ela termina, senão fica anunciando mapa que já não existe.
+watch(sincronizando, (rodando) => {
+  if (!rodando) recarregar();
 });
 
 const filtro = ref<"todos" | "SP" | "MP">("todos");
@@ -41,8 +48,15 @@ const data = (ms: number) => new Date(ms).toLocaleDateString("pt-BR");
         >
           {{ f.label }}
         </button>
+        <button class="filtro sincronizar" :disabled="sincronizando" @click="sincronizarMapas()">
+          {{ sincronizando ? "SINCRONIZANDO…" : "SINCRONIZAR" }}
+        </button>
       </div>
     </div>
+
+    <!-- Mapa baixando sem barra é jogador achando que travou: o que a sincronia
+         está fazendo aparece aqui, inclusive quando ela foi adiada. -->
+    <p v-if="recadoDaSincronia" class="sincronia">{{ recadoDaSincronia }}</p>
 
     <p v-if="!lista.length" class="vazio">
       Nenhum mapa encontrado — instale o jogo pela tela principal e eles aparecem aqui.
@@ -65,6 +79,21 @@ const data = (ms: number) => new Date(ms).toLocaleDateString("pt-BR");
   display: flex;
   gap: 2px;
   flex: none;
+}
+.sincronizar {
+  margin-left: 10px;
+}
+.sincronizar:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.sincronia {
+  margin-top: 14px;
+  padding: 8px 12px;
+  border: 1px solid var(--linha);
+  background: var(--painel);
+  font-size: 12px;
+  color: var(--pergaminho-fraco, var(--pergaminho));
 }
 .grade {
   display: grid;

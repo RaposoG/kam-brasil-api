@@ -14,6 +14,9 @@ export interface Account {
   /** ISO. É o "na comunidade desde" do perfil — a API sempre devolve, mas
    *  sessões restauradas de versões antigas do launcher podem não ter. */
   createdAt?: string
+  /** Abre o painel administrativo no menu. É só a chave da porta: quem
+   *  realmente decide é o `requireAdmin` da API, a cada requisição. */
+  isAdmin?: boolean
 }
 
 export interface LatestRelease {
@@ -37,27 +40,16 @@ export interface GameStatus {
   path: string
   installed: boolean
   version: string | null
-  assetsReady: boolean
-}
-
-export interface OriginalGame {
-  path: string
-  source: string
 }
 
 export interface InstallProgress {
-  phase: 'verificando' | 'baixando' | 'extraindo' | 'assets' | 'pronto'
+  phase: 'verificando' | 'baixando' | 'extraindo' | 'pronto'
   current_file: string
   files_done: number
   files_total: number
   bytes_done: number
   bytes_total: number
   bytes_per_second: number
-}
-
-export interface AssetProgress {
-  step: string
-  detail: string
 }
 
 // --- contas ---
@@ -75,14 +67,6 @@ export const restoreSession = (): Promise<Account | null> => invoke('restore_ses
 
 export const apiBase = (): Promise<string> => invoke('api_base')
 
-// --- KaM Remake (origem dos arquivos que não distribuímos) ---
-
-/** `null` = não achamos; a UI precisa pedir a pasta ao jogador. */
-export const findOriginalGame = (): Promise<OriginalGame | null> => invoke('find_original_game')
-
-export const checkOriginalGame = (path: string): Promise<OriginalGame> =>
-  invoke('check_original_game', { path })
-
 // --- instalação ---
 
 export const checkUpdate = (): Promise<UpdateCheck> => invoke('check_update')
@@ -91,11 +75,6 @@ export const installUpdate = (release: LatestRelease): Promise<void> =>
   invoke('install_update', { release })
 
 export const gameStatus = (): Promise<GameStatus> => invoke('game_status')
-
-export const assetsStatus = (): Promise<boolean> => invoke('assets_status')
-
-export const generateAssets = (originalPath: string): Promise<void> =>
-  invoke('generate_assets', { originalPath })
 
 /**
  * O mapa da partida está no disco? Conferência local, sem rede — é o par
@@ -107,8 +86,31 @@ export const generateAssets = (originalPath: string): Promise<void> =>
  */
 export const mapReady = (nome: string): Promise<boolean> => invoke('map_ready', { nome })
 
-/** Baixa só a pasta desse mapa da release atual. Erro = não está na release. */
+/**
+ * Baixa só a pasta desse mapa — do catálogo global primeiro, da release depois.
+ * Erro = não está em nenhum dos dois.
+ */
 export const downloadMap = (nome: string): Promise<void> => invoke('download_map', { nome })
+
+/** O que a sincronia do catálogo fez. `adiado` = não mexeu em nada, e `motivo` diz por quê. */
+export interface ResumoMapas {
+  adiado: boolean
+  motivo: string
+  baixados: number
+  apagados: number
+  total: number
+  /** A assinatura sincronizada — a mesma string que o canal difunde. Vazia se adiou. */
+  assinatura: string
+}
+
+/**
+ * Põe `MapsMP/` de acordo com o catálogo que o admin controla: baixa o que
+ * falta, atualiza o que mudou e apaga o que saiu.
+ *
+ * Só apaga o que ela mesma instalou (registrado em `kambrasil-mapas.json`). O
+ * mapa que o jogador fez ou baixou de outro servidor não é nosso para apagar.
+ */
+export const mapasSync = (): Promise<ResumoMapas> => invoke('mapas_sync')
 
 /**
  * Abre o jogo. Com `reserva`, o jogo entra direto na sala ranqueada em vez de
@@ -330,6 +332,11 @@ export type EventoRanqueado =
   | ({ tipo: 'fila' } & QueueStatus)
   | ({ tipo: 'lobby'; id: string } & LobbyView)
   | { tipo: 'conexao'; ligado: boolean }
+  // O admin mexeu no catálogo global de mapas. O evento leva a ASSINATURA do
+  // catálogo, não o catálogo: quem já sincronizou essa assinatura não faz nada,
+  // e é isso que permite a API empurrá-la também no instante da conexão — é
+  // assim que quem estava offline durante a mudança fica sabendo.
+  | { tipo: 'mapas'; assinatura: string }
 
 /** Idempotente: chamar com o socket vivo não abre um segundo. */
 export const tempoRealStart = (): Promise<void> => invoke('ranked_ws_start')
@@ -552,5 +559,10 @@ export function tempoRelativo(quando: number | string): string {
 export const onInstallProgress = (handler: (p: InstallProgress) => void) =>
   listen<InstallProgress>('install-progress', (e) => handler(e.payload))
 
-export const onAssetProgress = (handler: (p: AssetProgress) => void) =>
-  listen<AssetProgress>('asset-progress', (e) => handler(e.payload))
+/**
+ * Barra própria da sincronia de mapas — mesmo formato do progresso da
+ * instalação, evento separado. Misturar os dois faria a sincronia de mapas
+ * aparecer na Home como se o jogo estivesse sendo reinstalado.
+ */
+export const onMapasProgress = (handler: (p: InstallProgress) => void) =>
+  listen<InstallProgress>('mapas-progress', (e) => handler(e.payload))

@@ -18,10 +18,9 @@ dedicado a reportar o fim da partida, e isso é trabalho em Pascal — a Fase 1b
 |---|---|
 | Login, registro, restaurar sessão (cofre do sistema), logout | `auth.rs` ↔ `POST /auth/*` |
 | Instalar / atualizar o jogo por manifesto (diff + sha256) | `install.rs` ↔ `/client/latest` |
-| Achar o KaM original, gerar assets derivados | `original.rs`, `assets.rs` |
 | Abrir o jogo autenticado (ticket de partida) | `game.rs` ↔ `POST /auth/ticket` |
 | Auto-update do próprio launcher (assinado) | plugin updater |
-| Tela de Configurações (pasta, original, verificação, regerar) | `install.ts` |
+| Tela de Configurações (pasta, verificação, update do launcher) | `install.ts` |
 | MOTD servido ao jogo | `GET /announcements.php` |
 
 ## Camada 2 — passa a ser real nesta rodada

@@ -85,24 +85,27 @@ fn contem(agulha: &[u8], palheiro: &[u8]) -> bool {
 /// ali e receberia um `.bas` truncado. Com nanossegundos no meio isso já é
 /// praticamente impossível; a conferência custa um passe pelos bytes e tira o
 /// "praticamente".
-fn boundary_livre(partes: &[(&str, Vec<u8>)]) -> String {
+/// Recebe os conteúdos crus (e não as partes já nomeadas) porque o painel
+/// administrativo sobe a pasta de um mapa pelo mesmo caminho — arquivos com
+/// outro formato de parte, mesmo risco de colisão.
+pub fn boundary_livre(conteudos: &[&[u8]]) -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
 
-    escolher_boundary(&nanos.to_string(), partes)
+    escolher_boundary(&nanos.to_string(), conteudos)
 }
 
 /// Separado de `boundary_livre` só para o teste poder ser determinístico — com
 /// o relógio dentro, a repescagem nunca seria exercitada duas vezes igual.
-fn escolher_boundary(semente: &str, partes: &[(&str, Vec<u8>)]) -> String {
+fn escolher_boundary(semente: &str, conteudos: &[&[u8]]) -> String {
     let mut tentativa = 0u32;
     loop {
         let candidato = format!("----KamBrasil-{semente}-{tentativa}");
-        if !partes
+        if !conteudos
             .iter()
-            .any(|(_, bytes)| contem(candidato.as_bytes(), bytes))
+            .any(|bytes| contem(candidato.as_bytes(), bytes))
         {
             return candidato;
         }
@@ -148,7 +151,8 @@ pub async fn enviar_replay(
     let pasta = pasta_do_replay(game, nome)?;
     let partes = ler_partes(&pasta, nome).await?;
 
-    let boundary = boundary_livre(&partes);
+    let conteudos: Vec<&[u8]> = partes.iter().map(|(_, bytes)| bytes.as_slice()).collect();
+    let boundary = boundary_livre(&conteudos);
     let corpo = corpo_multipart(&boundary, &partes);
 
     // Cliente próprio em vez do pool de `ApiClient`: upload de replay acontece
@@ -264,13 +268,14 @@ mod tests {
     fn boundary_ocupado_pelo_savegame_e_descartado() {
         // Um savegame que contivesse o separador faria o outro lado cortar o
         // corpo no meio de um `.bas`. O candidato ocupado é pulado.
-        let limpo = vec![("bas", vec![0u8; 8])];
+        let limpo: [&[u8]; 1] = [&[0u8; 8]];
         assert_eq!(escolher_boundary("FIXO", &limpo), "----KamBrasil-FIXO-0");
 
-        let ocupado = vec![("bas", b"lixo----KamBrasil-FIXO-0lixo".to_vec())];
+        let sujo = b"lixo----KamBrasil-FIXO-0lixo".to_vec();
+        let ocupado: [&[u8]; 1] = [&sujo];
         assert_eq!(escolher_boundary("FIXO", &ocupado), "----KamBrasil-FIXO-1");
 
         // E o de produção, com o relógio, também sai livre.
-        assert!(!contem(boundary_livre(&limpo).as_bytes(), &limpo[0].1));
+        assert!(!contem(boundary_livre(&limpo).as_bytes(), limpo[0]));
     }
 }

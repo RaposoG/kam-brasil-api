@@ -124,7 +124,7 @@ export function crc32Hex(bytes: Uint8Array): string {
  * `null` em vez de exceção porque corpo malformado é entrada do usuário, não
  * defeito: a resposta certa é 400, não 500.
  */
-async function lerMultipart(bruto: Buffer, contentType: string) {
+export async function lerMultipart(bruto: Buffer, contentType: string) {
   try {
     return await new Response(bruto, { headers: { 'content-type': contentType } }).formData()
   } catch {

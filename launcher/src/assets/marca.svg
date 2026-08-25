@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- A marca do Kam Brasil: o mesmo losango da barra de título do launcher.
+       Origem em CSS (TitleBar.vue): quadrado de 9px em var(--ouro) girado 45
+       graus, com box-shadow de 3px na mesma cor a 12% de opacidade. -->
+  <rect width="1024" height="1024" fill="#1a1410"/>
+  <g transform="translate(512 512)">
+    <path d="M0,-235 L235,0 L0,235 L-235,0 Z" fill="#d4a24a" fill-opacity="0.12"/>
+    <path d="M0,-141 L141,0 L0,141 L-141,0 Z" fill="#d4a24a"/>
+  </g>
+</svg>

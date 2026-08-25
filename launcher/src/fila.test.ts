@@ -11,7 +11,7 @@ describe("quem pode entrar na fila ranqueada", () => {
   test("todo estado que não é 'jogar' barra, com motivo", () => {
     // O motivo importa tanto quanto o bloqueio: botão apagado sem explicação é
     // o jogador achando que o launcher quebrou.
-    const barrados: Acao[] = ["original", "instalar", "preparar", "esperar", "semVersao"];
+    const barrados: Acao[] = ["instalar", "esperar", "semVersao"];
     for (const acao of barrados) {
       const motivo = impedimentoParaFila(acao);
       expect(motivo.length, `${acao} deveria barrar`).toBeGreaterThan(0);

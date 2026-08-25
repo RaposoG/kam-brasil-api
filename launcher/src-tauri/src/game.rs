@@ -1,7 +1,6 @@
 //! Configuração e lançamento do cliente do jogo.
 //!
-//! Download e versionamento vivem em `install.rs`; geração dos arquivos
-//! derivados do jogo original, em `assets.rs`.
+//! Download e versionamento vivem em `install.rs`.
 
 use std::path::{Path, PathBuf};
 
@@ -11,14 +10,13 @@ use tauri::State;
 use crate::auth::AppState;
 use crate::install::game_dir;
 
-const EXE_NAME: &str = "KaM_Remake.exe";
+pub(crate) const EXE_NAME: &str = "KaM_Remake.exe";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GameStatus {
     pub path: String,
     pub installed: bool,
     pub version: Option<String>,
-    pub assets_ready: bool,
 }
 
 #[tauri::command]
@@ -28,7 +26,6 @@ pub fn game_status() -> GameStatus {
         path: dir.display().to_string(),
         installed: dir.join(EXE_NAME).is_file(),
         version: crate::install::read_installed(&dir).map(|i| i.version),
-        assets_ready: crate::assets::assets_ready(&dir),
     }
 }
 
@@ -240,12 +237,12 @@ pub async fn launch_game(state: State<'_, AppState>, reserva: Option<Reserva>) -
     let dir = game_dir();
     let exe = dir.join(EXE_NAME);
 
+    // Único gate antes de abrir: o executável existe. O que está no disco é o
+    // que o manifesto mandou baixar -- `install.rs` confere tamanho e sha256 de
+    // cada arquivo --, então não há mais nada para "preparar" na máquina do
+    // jogador.
     if !exe.is_file() {
         return Err(format!("{EXE_NAME} não encontrado em {}", dir.display()));
-    }
-
-    if !crate::assets::assets_ready(&dir) {
-        return Err("os arquivos do jogo original ainda não foram gerados".into());
     }
 
     if let Some(nickname) = state.nickname() {

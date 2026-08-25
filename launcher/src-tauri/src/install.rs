@@ -6,9 +6,9 @@
 //! do payload e quase nunca mudam, uma correção no executável vira poucos MB em
 //! vez de meio giga.
 //!
-//! O que a API **não** entrega são os arquivos derivados do Knights and
-//! Merchants original. Esses são produzidos aqui, a partir da cópia do próprio
-//! jogador (ver `assets.rs`).
+//! A release traz a árvore **inteira** -- sprites, sons e músicas inclusive.
+//! Nada é derivado na máquina do jogador, e nada exige o Knights and Merchants
+//! original: o que sai daqui já está pronto para abrir.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -76,7 +76,7 @@ pub struct InstalledInfo {
 /// Progresso emitido como evento `install-progress`.
 #[derive(Clone, Serialize)]
 pub struct Progress {
-    /// `verificando` | `baixando` | `assets` | `pronto`
+    /// `verificando` | `baixando` | `extraindo` | `pronto`
     pub phase: String,
     pub current_file: String,
     pub files_done: u32,
@@ -110,11 +110,20 @@ fn sha256_of(path: &Path) -> Option<String> {
     Some(format!("{:x}", Sha256::digest(&bytes)))
 }
 
-/// Decide o que precisa ser baixado.
+/// Este arquivo do manifesto ainda não está no disco como o manifesto o descreve?
 ///
 /// Tamanho diferente já reprova sem ler o arquivo inteiro — é o caso comum e
 /// evita hashear centenas de MB à toa. Só quando o tamanho bate é que o sha256
 /// decide, porque tamanho igual com conteúdo diferente existe.
+pub(crate) fn precisa_baixar(dir: &Path, f: &ManifestFile) -> bool {
+    let local = dir.join(f.path.replace('/', std::path::MAIN_SEPARATOR_STR));
+    match std::fs::metadata(&local) {
+        Ok(meta) if meta.len() == f.size => sha256_of(&local).as_deref() != Some(&f.sha256),
+        _ => true,
+    }
+}
+
+/// Decide o que precisa ser baixado.
 ///
 /// `on_checked` recebe quantos já foram conferidos. Numa instalação existente
 /// isso lê e hasheia centenas de MB e leva dezenas de segundos — sem avisar, a
@@ -127,13 +136,7 @@ pub fn files_to_download(
     let mut pending = Vec::new();
 
     for (index, f) in manifest.files.iter().enumerate() {
-        let local = dir.join(f.path.replace('/', std::path::MAIN_SEPARATOR_STR));
-        let up_to_date = match std::fs::metadata(&local) {
-            Ok(meta) if meta.len() == f.size => sha256_of(&local).as_deref() == Some(&f.sha256),
-            _ => false,
-        };
-
-        if !up_to_date {
+        if precisa_baixar(dir, f) {
             pending.push(f.clone());
         }
 
@@ -248,15 +251,28 @@ pub fn map_ready(nome: String) -> bool {
     mapa_completo(&game_dir(), nome.trim())
 }
 
-/// Baixa **só** a pasta do mapa da release atual.
+/// Baixa **só** a pasta desse mapa — primeiro do catálogo global, depois da
+/// release.
 ///
-/// Reaproveita a mesma maquinaria da instalação: `files_to_download` decide o
-/// que falta pelo sha256 e `download_one` baixa com verificação e troca
-/// atômica. O que sobra aqui é filtrar o manifesto.
+/// A ordem importa: o catálogo é o que o admin curou e o que a ranqueada sorteia,
+/// e um mapa novo entra nele antes de entrar em qualquer release. Só quando o
+/// mapa não está no catálogo é que a release responde — é o caso dos 211 mapas
+/// que vieram dentro do jogo.
+///
+/// Reaproveita a mesma maquinaria da instalação: `precisa_baixar` decide o que
+/// falta pelo sha256 e `download_one` baixa com verificação e troca atômica.
 #[tauri::command]
 pub async fn download_map(state: State<'_, AppState>, nome: String) -> Result<(), String> {
     let nome = nome.trim().to_string();
     let dir = game_dir();
+
+    // Falha de rede aqui não pode fechar a porta da release: o mapa da partida
+    // pode estar nas duas, e o jogador está esperando para entrar num lobby.
+    match crate::mapas::baixar_do_catalogo(&state.api_base(), &nome).await {
+        Ok(true) => return Ok(()),
+        Ok(false) => {}
+        Err(e) => eprintln!("aviso: catálogo de mapas indisponível ({e}); tentando pela release"),
+    }
 
     let release = latest_release(&state.api_base())
         .await?
@@ -266,11 +282,12 @@ pub async fn download_map(state: State<'_, AppState>, nome: String) -> Result<()
     let mut so_o_mapa = manifest.clone();
     so_o_mapa.files = arquivos_do_mapa(&manifest, &nome);
 
-    // Mapa de temporada que ainda não entrou numa release: baixar é impossível,
-    // e o jogador precisa saber disso em vez de ficar olhando um download.
+    // Mapa de temporada que não está no catálogo nem entrou numa release:
+    // baixar é impossível, e o jogador precisa saber disso em vez de ficar
+    // olhando um download.
     if so_o_mapa.files.is_empty() {
         return Err(format!(
-            "o mapa \"{nome}\" não existe na versão {} do jogo. Avise a organização da temporada — não há o que baixar.",
+            "o mapa \"{nome}\" não está no catálogo nem na versão {} do jogo. Avise a organização da temporada — não há o que baixar.",
             release.version
         ));
     }
@@ -475,7 +492,7 @@ fn extract_zip_to(
 ///
 /// Grava em `.kbpart` e só então renomeia: uma queda no meio não deixa um
 /// arquivo truncado passando por bom na verificação seguinte.
-async fn download_one(
+pub(crate) async fn download_one(
     client: &reqwest::Client,
     base_url: &str,
     dir: &Path,
@@ -543,6 +560,202 @@ async fn download_one(
         .map_err(|e| format!("não foi possível instalar {}: {e}", file.path))?;
 
     Ok(())
+}
+
+/// Baixa uma lista de arquivos em paralelo e devolve quantos bytes vieram da rede.
+///
+/// O progresso sai em `evento` — `install-progress` para a instalação do jogo,
+/// `mapas-progress` para a sincronia do catálogo. São duas barras diferentes na
+/// tela, e misturá-las faria a sincronia de mapas aparecer como se o jogo
+/// estivesse sendo reinstalado.
+pub(crate) async fn baixar_em_paralelo(
+    app: &AppHandle,
+    client: &reqwest::Client,
+    base_url: &str,
+    dir: &Path,
+    pending: Vec<ManifestFile>,
+    evento: &'static str,
+) -> Result<u64, String> {
+    let bytes_total: u64 = pending.iter().map(|f| f.size).sum();
+    let files_total = pending.len() as u32;
+    let started = std::time::Instant::now();
+    let bytes_done = Arc::new(AtomicU64::new(0));
+    let files_done = Arc::new(AtomicU32::new(0));
+
+    // Progresso sai de um relógio próprio, não de dentro dos downloads. Com 12
+    // tarefas concorrentes, emitir por chunk inundaria a webview com milhares
+    // de eventos por segundo para atualizar uma barra.
+    let ticker = {
+        let app = app.clone();
+        let bytes_done = bytes_done.clone();
+        let files_done = files_done.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
+            loop {
+                interval.tick().await;
+                let done = bytes_done.load(Ordering::Relaxed);
+                let secs = started.elapsed().as_secs_f64().max(0.001);
+                let _ = app.emit(
+                    evento,
+                    Progress {
+                        phase: "baixando".into(),
+                        current_file: String::new(),
+                        files_done: files_done.load(Ordering::Relaxed),
+                        files_total,
+                        bytes_done: done,
+                        bytes_total,
+                        bytes_per_second: (done as f64 / secs) as u64,
+                    },
+                );
+            }
+        })
+    };
+
+    let semaphore = Arc::new(Semaphore::new(CONCURRENCY));
+    let mut tasks = JoinSet::new();
+
+    for file in pending {
+        let permit = semaphore.clone();
+        let client = client.clone();
+        let base_url = base_url.to_string();
+        let dir = dir.to_path_buf();
+        let bytes_done = bytes_done.clone();
+        let files_done = files_done.clone();
+
+        tasks.spawn(async move {
+            let _permit = permit.acquire().await.map_err(|e| e.to_string())?;
+            download_one(&client, &base_url, &dir, &file, &bytes_done).await?;
+            files_done.fetch_add(1, Ordering::Relaxed);
+            Ok::<(), String>(())
+        });
+    }
+
+    // Primeiro erro aborta o resto: insistir depois de uma falha so faria o
+    // jogador esperar mais para receber a mesma mensagem.
+    //
+    // O PRIMEIRO erro e que vale. Depois do abort_all as demais tarefas
+    // retornam "cancelada", e sobrescrever com elas trocaria a causa real por
+    // ruido -- o jogador leria "tarefa cancelada" sem saber o que houve.
+    let mut failure: Option<String> = None;
+    while let Some(joined) = tasks.join_next().await {
+        let result = match joined {
+            Ok(inner) => inner,
+            // Cancelamento e consequencia do nosso proprio abort_all.
+            Err(e) if e.is_cancelled() => continue,
+            Err(e) => Err(format!("tarefa de download falhou: {e}")),
+        };
+
+        if let Err(e) = result {
+            if failure.is_none() {
+                failure = Some(e);
+                tasks.abort_all();
+            }
+        }
+    }
+
+    ticker.abort();
+
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(bytes_done.load(Ordering::Relaxed)),
+    }
+}
+
+/// Pastas onde o JOGADOR põe coisa dele. A poda nunca entra aqui.
+///
+/// A regra é listar o que não se toca, e não o que se apaga: uma lista de
+/// "apagar" esquecida cresce sozinha com a próxima release e come dado alheio.
+/// Aqui, esquecer uma pasta significa deixar lixo — que é o erro barato.
+///
+/// As de mapa entram porque o jogador acrescenta mapa lá, e porque o catálogo
+/// global também instala em `MapsMP/` com registro próprio (ver `mapas.rs`).
+/// Duas coisas podando a mesma pasta com regras diferentes é como se apaga o
+/// acervo de alguém sem ninguém ter decidido isso.
+const NUNCA_PODAR: &[&str] = &[
+    "saves/",
+    "savesmp/",
+    "savescmp/",
+    "logs/",
+    "replays/",
+    "maps/",
+    "mapsmp/",
+    "mapsdl/",
+    "campaigns/",
+    "tutorials/",
+];
+
+/// Arquivos soltos na raiz que são do jogador ou nossos — nunca da release.
+///
+/// `KaM Remake Settings.xml` guarda nickname, resolução e volume: apagá-lo
+/// zeraria a configuração de quem só queria atualizar o jogo.
+const NUNCA_PODAR_ARQUIVO: &[&str] = &[
+    "kam remake settings.xml",
+    "kam remake server settings.ini",
+    "kmr_dev.xml",
+    "kambrasil.json",
+];
+
+fn protegido(rel: &str) -> bool {
+    let baixo = rel.to_ascii_lowercase();
+    NUNCA_PODAR.iter().any(|p| baixo.starts_with(p)) || NUNCA_PODAR_ARQUIVO.contains(&baixo.as_str())
+}
+
+/// Apaga o que a release não tem mais.
+///
+/// Existe por um caso concreto: enquanto os sprites e os sons eram gerados na
+/// máquina do jogador, o launcher criava `data/sfx/speech/` — 118 MB de `.snd`
+/// que o jogo não lê. Agora tudo vem pronto na release, aquela pasta ficou
+/// órfã, e ninguém a limparia nunca.
+///
+/// Só apaga arquivo que (a) não está no manifesto e (b) não está sob nada
+/// protegido. Falha em apagar não interrompe nada: arquivo travado pelo
+/// antivírus ou sem permissão é motivo para deixar lixo, nunca para quebrar uma
+/// instalação que deu certo.
+fn podar_orfaos(dir: &Path, manifest: &Manifest) -> u32 {
+    let esperados: std::collections::HashSet<String> = manifest
+        .files
+        .iter()
+        .map(|f| f.path.to_ascii_lowercase())
+        .collect();
+
+    let mut apagados = 0;
+    let mut pastas: Vec<PathBuf> = Vec::new();
+    let mut fila = vec![dir.to_path_buf()];
+
+    while let Some(atual) = fila.pop() {
+        let Ok(entradas) = std::fs::read_dir(&atual) else { continue };
+        for entrada in entradas.flatten() {
+            let caminho = entrada.path();
+            let Ok(rel) = caminho.strip_prefix(dir) else { continue };
+            let Some(rel) = rel.to_str() else { continue };
+            // Vem do sistema de arquivos: no Windows chega com barra invertida,
+            // e o manifesto usa barra normal.
+            let rel = rel.replace(std::path::MAIN_SEPARATOR, "/");
+
+            if caminho.is_dir() {
+                // Barra no fim para `saves/` não casar com `savesomething/`.
+                if protegido(&format!("{rel}/")) {
+                    continue;
+                }
+                pastas.push(caminho.clone());
+                fila.push(caminho);
+            } else if !esperados.contains(&rel.to_ascii_lowercase()) && !protegido(&rel) {
+                if std::fs::remove_file(&caminho).is_ok() {
+                    apagados += 1;
+                }
+            }
+        }
+    }
+
+    // Pasta que ficou vazia some junto. `remove_dir` se recusa a apagar pasta
+    // com conteúdo, e é essa recusa que preserva o que sobrou lá dentro.
+    // De trás para frente: a mais funda primeiro, senão a de cima nunca esvazia.
+    pastas.sort();
+    for pasta in pastas.into_iter().rev() {
+        let _ = std::fs::remove_dir(&pasta);
+    }
+
+    apagados
 }
 
 /// Baixa tudo que falta e grava a versão instalada.
@@ -613,90 +826,25 @@ pub async fn install_update(app: AppHandle, release: LatestRelease) -> Result<()
         }
     }
 
-    let bytes_total: u64 = pending.iter().map(|f| f.size).sum();
     let files_total = pending.len() as u32;
-    let started = std::time::Instant::now();
-    let bytes_done = Arc::new(AtomicU64::new(0));
-    let files_done = Arc::new(AtomicU32::new(0));
+    let bytes_total: u64 = pending.iter().map(|f| f.size).sum();
+    let bytes_done =
+        baixar_em_paralelo(&app, &client, &release.base_url, &dir, pending, "install-progress").await?;
 
-    // Progresso sai de um relógio próprio, não de dentro dos downloads. Com 12
-    // tarefas concorrentes, emitir por chunk inundaria a webview com milhares
-    // de eventos por segundo para atualizar uma barra.
-    let ticker = {
-        let app = app.clone();
-        let bytes_done = bytes_done.clone();
-        let files_done = files_done.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
-            loop {
-                interval.tick().await;
-                let done = bytes_done.load(Ordering::Relaxed);
-                let secs = started.elapsed().as_secs_f64().max(0.001);
-                let _ = app.emit(
-                    "install-progress",
-                    Progress {
-                        phase: "baixando".into(),
-                        current_file: String::new(),
-                        files_done: files_done.load(Ordering::Relaxed),
-                        files_total,
-                        bytes_done: done,
-                        bytes_total,
-                        bytes_per_second: (done as f64 / secs) as u64,
-                    },
-                );
-            }
-        })
-    };
-
-    let semaphore = Arc::new(Semaphore::new(CONCURRENCY));
-    let mut tasks = JoinSet::new();
-
-    for file in pending {
-        let permit = semaphore.clone();
-        let client = client.clone();
-        let base_url = release.base_url.clone();
-        let dir = dir.clone();
-        let bytes_done = bytes_done.clone();
-        let files_done = files_done.clone();
-
-        tasks.spawn(async move {
-            let _permit = permit.acquire().await.map_err(|e| e.to_string())?;
-            download_one(&client, &base_url, &dir, &file, &bytes_done).await?;
-            files_done.fetch_add(1, Ordering::Relaxed);
-            Ok::<(), String>(())
-        });
-    }
-
-    // Primeiro erro aborta o resto: insistir depois de uma falha so faria o
-    // jogador esperar mais para receber a mesma mensagem.
+    // Depois de baixar, e só depois: uma poda antes do download apagaria
+    // arquivo que a release ainda vai repor, e uma interrupção no meio deixaria
+    // a instalação pior do que estava.
     //
-    // O PRIMEIRO erro e que vale. Depois do abort_all as demais tarefas
-    // retornam "cancelada", e sobrescrever com elas trocaria a causa real por
-    // ruido -- o jogador leria "tarefa cancelada" sem saber o que houve.
-    let mut failure: Option<String> = None;
-    while let Some(joined) = tasks.join_next().await {
-        let result = match joined {
-            Ok(inner) => inner,
-            // Cancelamento e consequencia do nosso proprio abort_all.
-            Err(e) if e.is_cancelled() => continue,
-            Err(e) => Err(format!("tarefa de download falhou: {e}")),
-        };
-
-        if let Err(e) = result {
-            if failure.is_none() {
-                failure = Some(e);
-                tasks.abort_all();
-            }
-        }
+    // Roda em `spawn_blocking` porque varre o disco inteiro da instalação, e
+    // segurar o executor assíncrono nisso trava o progresso da tela.
+    let dir_poda = dir.clone();
+    let manifest_poda = manifest.clone();
+    let apagados = tokio::task::spawn_blocking(move || podar_orfaos(&dir_poda, &manifest_poda))
+        .await
+        .unwrap_or(0);
+    if apagados > 0 {
+        eprintln!("poda: {apagados} arquivo(s) que a release não tem mais");
     }
-
-    ticker.abort();
-
-    if let Some(error) = failure {
-        return Err(error);
-    }
-
-    let bytes_done = bytes_done.load(Ordering::Relaxed);
 
     let info = InstalledInfo { version: manifest.version.clone() };
     tokio::fs::write(
@@ -723,14 +871,14 @@ pub async fn install_update(app: AppHandle, release: LatestRelease) -> Result<()
 mod tests {
     use super::*;
 
-    fn temp_dir(name: &str) -> PathBuf {
+    pub(super) fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("kambrasil-inst-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
-    fn manifest_of(files: &[(&str, &str)]) -> Manifest {
+    pub(super) fn manifest_of(files: &[(&str, &str)]) -> Manifest {
         Manifest {
             version: "1.0.0".into(),
             game_revision: "r16155".into(),
@@ -902,5 +1050,104 @@ mod tests {
         let m = manifest_of(&[("a.txt", "aaa")]);
         assert_eq!(files_to_download(&dir, &m, |_| {}).len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod poda {
+    use super::tests::{manifest_of, temp_dir};
+    use super::*;
+
+    fn escrever(dir: &Path, rel: &str, conteudo: &str) {
+        let caminho = dir.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
+        std::fs::create_dir_all(caminho.parent().unwrap()).unwrap();
+        std::fs::write(&caminho, conteudo).unwrap();
+    }
+
+    fn existe(dir: &Path, rel: &str) -> bool {
+        dir.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR)).exists()
+    }
+
+    /// Uma instalação como as que existem hoje: arquivos da release, lixo da
+    /// conversão antiga, e as coisas do jogador no meio.
+    fn instalacao(nome: &str) -> (PathBuf, Manifest) {
+        let dir = temp_dir(nome);
+
+        // Da release
+        escrever(&dir, "data/Sprites/Units.rxx", "novo");
+        escrever(&dir, "Music/track_00.mp2", "musica");
+
+        // Órfãos: o launcher antigo gerava isto, e a release nova não tem
+        escrever(&dir, "data/sfx/speech/AXEMAN/0.snd", "lixo");
+        escrever(&dir, "Music/99 - sobra do experimento.mp2", "lixo");
+
+        // Do JOGADOR — nada disto pode sumir
+        escrever(&dir, "SavesMP/minha partida/minha partida.sav", "save");
+        escrever(&dir, "MapsMP/Mapa Que Eu Baixei/Mapa Que Eu Baixei.dat", "mapa");
+        escrever(&dir, "MapsDL/outro/outro.dat", "mapa baixado");
+        escrever(&dir, "Logs/KaM 2026.log", "log");
+        escrever(&dir, "KaM Remake Settings.xml", "nickname e volume");
+        escrever(&dir, "kambrasil.json", "{}");
+
+        let manifest = manifest_of(&[("data/Sprites/Units.rxx", "x"), ("Music/track_00.mp2", "y")]);
+        (dir, manifest)
+    }
+
+    #[test]
+    fn apaga_o_que_a_release_nao_tem_mais() {
+        let (dir, manifest) = instalacao("poda-orfaos");
+        let n = podar_orfaos(&dir, &manifest);
+
+        assert!(!existe(&dir, "data/sfx/speech/AXEMAN/0.snd"), "órfão da conversão antiga devia sair");
+        assert!(!existe(&dir, "Music/99 - sobra do experimento.mp2"), "sobra devia sair");
+        assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn nao_encosta_no_que_e_do_jogador() {
+        // O teste que importa. Um erro aqui apaga save e mapa de gente, e não
+        // tem desfazer.
+        let (dir, manifest) = instalacao("poda-jogador");
+        podar_orfaos(&dir, &manifest);
+
+        for dele in [
+            "SavesMP/minha partida/minha partida.sav",
+            "MapsMP/Mapa Que Eu Baixei/Mapa Que Eu Baixei.dat",
+            "MapsDL/outro/outro.dat",
+            "Logs/KaM 2026.log",
+            "KaM Remake Settings.xml",
+            "kambrasil.json",
+        ] {
+            assert!(existe(&dir, dele), "{dele} é do jogador e não podia ser apagado");
+        }
+    }
+
+    #[test]
+    fn preserva_o_que_esta_no_manifesto() {
+        let (dir, manifest) = instalacao("poda-manifesto");
+        podar_orfaos(&dir, &manifest);
+
+        assert!(existe(&dir, "data/Sprites/Units.rxx"));
+        assert!(existe(&dir, "Music/track_00.mp2"));
+    }
+
+    #[test]
+    fn pasta_que_esvaziou_some_mas_a_com_conteudo_fica() {
+        let (dir, manifest) = instalacao("poda-pastas");
+        podar_orfaos(&dir, &manifest);
+
+        assert!(!existe(&dir, "data/sfx/speech"), "pasta vazia devia sumir junto");
+        assert!(existe(&dir, "Music"), "pasta com arquivo do manifesto fica");
+        assert!(existe(&dir, "SavesMP"), "pasta do jogador fica");
+    }
+
+    #[test]
+    fn rodar_duas_vezes_nao_muda_nada() {
+        let (dir, manifest) = instalacao("poda-idempotente");
+        let primeira = podar_orfaos(&dir, &manifest);
+        let segunda = podar_orfaos(&dir, &manifest);
+
+        assert_eq!(primeira, 2);
+        assert_eq!(segunda, 0, "a segunda passada não tem o que apagar");
     }
 }

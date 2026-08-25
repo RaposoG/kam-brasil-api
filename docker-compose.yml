@@ -173,6 +173,17 @@ services:
       # Releases sao centenas de MB e vivem em disco, nao no banco. Sem volume,
       # cada rebuild apagaria tudo.
       - releases:/app/releases
+      # Arquivos do catalogo global de mapas -- o que o admin sobe pelo painel e
+      # o launcher baixa. Fora da release de proposito: acrescentar um mapa nao
+      # pode exigir publicar o jogo inteiro. Sem este volume, um rebuild apaga o
+      # acervo curado, e nao ha de onde recuperar: os bytes so existem aqui.
+      - mapas:/app/mapas
+      # Replays enviados pelos jogadores (routes/replay.ts grava em
+      # RELEASES_DIR/../replays, ou seja /app/replays). Mesmo modo de falha do
+      # `mapas`: sem volume, todo rebuild apaga o acervo -- e replay e a UNICA
+      # prova do processo anti-cheat manual, o anexo que a tela de Denuncias
+      # abre para decidir. Perdido, nao ha de onde recuperar.
+      - replays:/app/replays
       # Cache dos repositorios de conteudo (mapas, textos, sprites). Sem volume,
       # cada release reclonaria centenas de MB em vez de dar um fetch.
       - sources:/app/sources
@@ -287,5 +298,7 @@ services:
 volumes:
   postgres-data:
   releases:
+  mapas:
+  replays:
   sources:
   ranked-secret:

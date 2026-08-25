@@ -20,6 +20,7 @@ import rankedInternalRoutes from './routes/ranked-internal.ts'
 import rankedRoutes from './routes/ranked.ts'
 import matchesRoutes from './routes/matches.ts'
 import replayRoutes from './routes/replay.ts'
+import mapasRoutes from './routes/mapas.ts'
 import reportsRoutes from './routes/reports.ts'
 import tempoRealRoutes from './ranked/tempo-real.ts'
 
@@ -87,13 +88,21 @@ await app.register(matchesRoutes)
 // Upload/download de replay e statsJson. Registra num escopo próprio: o plugin
 // instala um parser de multipart que não pode vazar para as outras rotas.
 await app.register(replayRoutes)
+// Catálogo global de mapas: upload do painel, manifesto e download dos
+// arquivos. Escopo próprio pelo mesmo motivo do replay — o parser de
+// multipart do upload não pode vazar para as outras rotas.
+await app.register(mapasRoutes)
 await app.register(reportsRoutes)
-// O socket que o launcher abre em `ranked_ws.rs` (`wss://.../ranked/tempo-real`).
-// Sem este registro o canal não existe e a falha é silenciosa: a tela cai no
-// poll e ninguém percebe que o tempo real nunca subiu.
-if (config.RANKED_ENABLED) {
-  await app.register(tempoRealRoutes)
-}
+// O canal de tempo real da sessão (`wss://.../tempo-real`, mais o
+// `/ranked/tempo-real` antigo enquanto houver launcher 1.4.x em campo).
+//
+// Registrado SEMPRE, e não mais só com a ranqueada ligada: além da fila e do
+// lobby ele leva o aviso de que o catálogo de mapas mudou, e esse aviso precisa
+// chegar a quem nunca abriu a ranqueada. Sem ranqueada o pulso da fila fica de
+// fora (`pulsoMs: 0`) — seria uma consulta ao banco a cada 500 ms para ler uma
+// fila que ninguém consegue nem criar. Sem este registro o canal não existe e a
+// falha é silenciosa: a tela cai no poll e ninguém percebe.
+await app.register(tempoRealRoutes, config.RANKED_ENABLED ? {} : { pulsoMs: 0 })
 
 app.get('/health', async () => {
   // Confirma que a API está de pé E que ela enxerga o banco — teste de fumaça

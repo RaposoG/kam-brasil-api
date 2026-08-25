@@ -7,8 +7,20 @@ import { vistaDoLobby, type MapaDoPool } from '../routes/ranked.ts'
 import { dataSource, lobbies, lobbyPlayers, playerRatings, queueEntries } from './fila-repos.ts'
 
 /**
- * Tempo real da fila e do lobby de bans — o canal que o dono pediu no lugar do
- * poll de 3 s / 1,5 s ("Decisões do dono", item 4).
+ * O canal de tempo real da **sessão**. Enquanto o launcher está aberto e
+ * logado, ele fica de pé — não importa em que tela o jogador esteja.
+ *
+ * Nasceu só para a fila e o lobby de bans (no lugar do poll de 3 s / 1,5 s,
+ * "Decisões do dono", item 4) e por isso o arquivo mora em `ranked/`. Não é
+ * mais só disso: hoje ele também carrega o aviso de que o catálogo de mapas
+ * mudou, que precisa chegar a quem está parado na Home. O caminho passou a ser
+ * `/tempo-real`; `/ranked/tempo-real` continua atendendo (ver CAMINHO_ANTIGO).
+ *
+ * O arquivo ficou onde estava de propósito: `bun test` compartilha um processo
+ * e `config.ts` congela o ambiente no primeiro import, então a posição deste
+ * teste na ordem de execução é carga viva para `routes/ranked-internal.test.ts`
+ * (ver o comentário no topo do teste daqui). Mover o arquivo mudaria essa ordem
+ * — e o sintoma apareceria em outro teste, sem relação aparente.
  *
  * Três coisas que não são óbvias e explicam o formato deste arquivo:
  *
@@ -36,6 +48,20 @@ const PULSO_MS = 500
 
 /** O que o cliente manda para pedir o estado atual. É o único comando aceito. */
 const PEDIDO_DE_SYNC = 'sync'
+
+/** O canal é da sessão inteira, não da fila. */
+const CAMINHO = '/tempo-real'
+
+/**
+ * O caminho antigo, mantido vivo de propósito.
+ *
+ * O launcher 1.4.x abre `wss://.../ranked/tempo-real` (`ranked_ws.rs`), e um
+ * cliente já instalado não tem como saber que o endereço mudou. Tirar isto
+ * antes de a base atualizar deixaria a fila e o lobby cegos justamente para
+ * quem demora a atualizar — e no lobby de bans ficar cego é perder a partida
+ * por WO. Sai quando não houver mais launcher antigo em campo.
+ */
+const CAMINHO_ANTIGO = '/ranked/tempo-real'
 
 /**
  * Ping periódico, e a única prova de que o outro lado ainda existe.
@@ -196,6 +222,61 @@ const lerDoBanco: Leitor = async (contas) => {
   return { fila, lobbies: vistas, aguardando }
 }
 
+// ---------------------------------------------------------------------------
+// Catálogo de mapas
+// ---------------------------------------------------------------------------
+
+/**
+ * O evento leva a **assinatura** do catálogo, não o catálogo.
+ *
+ * Difundir a lista inteira para todo mundo a cada mudança do admin seria
+ * mandar o mesmo payload N vezes para quem já o tem, e ainda congelaria o
+ * formato do manifesto dentro deste canal — mudar um campo lá passaria a
+ * quebrar aqui. O cliente compara a assinatura com a que ele tem e só busca o
+ * manifesto quando difere.
+ */
+export type EventoDeMapas = { tipo: 'mapas'; assinatura: string }
+
+/**
+ * Quem avisar quando a assinatura mudar. Um por registro do plugin (na prática,
+ * um só) — conjunto, e não variável, porque no teste vários apps sobem no mesmo
+ * processo e um `app.close()` não pode calar o app do vizinho.
+ */
+const difusores = new Set<(assinatura: string) => void>()
+
+/**
+ * A última assinatura conhecida. Existe para o caso que mais importa: quem
+ * estava **offline** quando o admin mexeu no catálogo. Sem ela, o jogador que
+ * abre o launcher depois da mudança só saberia na mudança seguinte — ou seja,
+ * nunca. Guardada aqui, ela é empurrada no instante em que ele conecta.
+ *
+ * `null` = ninguém publicou ainda nesta subida da API. Nesse estado o canal não
+ * manda evento nenhum, e o cliente cai no que já faz ao abrir: buscar o
+ * manifesto. Por isso o módulo do catálogo deve chamar `avisarCatalogoDeMapas`
+ * também ao registrar, e não só nas mudanças.
+ */
+let assinaturaDoCatalogo: string | null = null
+
+/**
+ * O gancho que o módulo do catálogo de mapas chama — ao subir e a cada
+ * adição, atualização ou remoção de mapa.
+ *
+ * Idempotente: assinatura repetida não difunde nada. É de propósito, para que
+ * chamar demais seja barato e seguro (do handler que já calculou a assinatura,
+ * por exemplo) e chamar de menos seja o único erro possível.
+ *
+ * ponytail: o aviso é de processo. Teto: com mais de uma réplica da API, a
+ * mudança sai pela réplica que atendeu o admin e as outras não avisam os
+ * sockets delas. Hoje é uma réplica só. Se virarem várias, o upgrade é
+ * `pg_notify` no `UPDATE` do catálogo com cada réplica chamando esta mesma
+ * função ao receber — o resto do arquivo não muda.
+ */
+export function avisarCatalogoDeMapas(assinatura: string): void {
+  if (assinatura === assinaturaDoCatalogo) return
+  assinaturaDoCatalogo = assinatura
+  for (const difundir of difusores) difundir(assinatura)
+}
+
 /** `pulsoMs = 0` registra a rota sem ligar o pulso; `ler` troca o banco no teste. */
 export type OpcoesTempoReal = { pulsoMs?: number; pingMs?: number; ler?: Leitor }
 
@@ -218,6 +299,35 @@ export default async function tempoRealRoutes(app: FastifyInstance, opcoes: Opco
   }
   const conexoes = new Set<Conexao>()
 
+  /**
+   * A assinatura atual do catálogo, para uma conexão só.
+   *
+   * Chamada ao conectar e no `sync` — e é isso que fecha o buraco de quem
+   * estava offline na hora da mudança: ele não precisa de evento nenhum, só de
+   * conectar. Fora do pulso de propósito: o aviso de mapas tem que funcionar
+   * com a ranqueada desligada, e nesse modo o pulso nem existe.
+   */
+  const enviarMapas = (conexao: Conexao) => {
+    if (assinaturaDoCatalogo === null) return
+    conexao.enviar(JSON.stringify({ tipo: 'mapas', assinatura: assinaturaDoCatalogo } satisfies EventoDeMapas))
+  }
+
+  const difundirMapas = (assinatura: string) => {
+    const dado = JSON.stringify({ tipo: 'mapas', assinatura } satisfies EventoDeMapas)
+    for (const conexao of conexoes) {
+      // Quem dispara isto é o handler do admin, dentro da requisição dele. Um
+      // socket que morreu entre um ping e outro não pode virar 500 numa
+      // resposta que já salvou o mapa: o aviso é consequência da mudança, não
+      // a mudança.
+      try {
+        conexao.enviar(dado)
+      } catch {
+        conexoes.delete(conexao)
+      }
+    }
+  }
+  difusores.add(difundirMapas)
+
   // Mesmo `authenticate` das rotas normais: sem token válido não há upgrade, e
   // o cliente recebe o 401 antes de o socket existir.
   //
@@ -226,40 +336,65 @@ export default async function tempoRealRoutes(app: FastifyInstance, opcoes: Opco
   // launcher (`ranked_ws_stop`), e o que trafega até lá é o estado de quem
   // acabou de sair, para ele mesmo. Se precisar ser exato: guardar o `jti` da
   // conexão e varrer `sessions` junto com o ping.
-  app.get('/ranked/tempo-real', { websocket: true, onRequest: [app.authenticate] }, (socket, request) => {
-    const conexao: Conexao = {
-      enviar: (dado) => socket.send(dado),
-      pingar: () => socket.ping(),
-      encerrar: () => socket.terminate(),
-      conta: request.account.id,
-      // Assinatura vazia: o primeiro pulso entrega o estado inteiro. É isso que
-      // faz reconectar não depender de lembrar do que veio antes.
-      assinatura: NADA_ENVIADO,
-      pediuEstado: false,
-      respondeu: true,
-    }
-    conexoes.add(conexao)
+  for (const caminho of [CAMINHO, CAMINHO_ANTIGO]) {
+    app.get(caminho, { websocket: true, onRequest: [app.authenticate] }, (socket, request) => {
+      const conexao: Conexao = {
+        enviar: (dado) => socket.send(dado),
+        pingar: () => socket.ping(),
+        encerrar: () => socket.terminate(),
+        conta: request.account.id,
+        // Assinatura vazia: o primeiro pulso entrega o estado inteiro. É isso que
+        // faz reconectar não depender de lembrar do que veio antes.
+        assinatura: NADA_ENVIADO,
+        pediuEstado: false,
+        respondeu: true,
+      }
+      conexoes.add(conexao)
 
-    socket.on('close', () => conexoes.delete(conexao))
-    socket.on('error', () => conexoes.delete(conexao))
-    socket.on('pong', () => (conexao.respondeu = true))
+      // Antes de qualquer outra coisa: conectar já é conferir o catálogo.
+      enviarMapas(conexao)
 
-    // Único comando aceito: "me manda o estado atual de novo". Serve à webview
-    // recarregada — o socket vive no processo do launcher e sobrevive a ela, e
-    // sem isto a tela nova ficaria vazia até a próxima mudança.
-    socket.on('message', (dado: { toString(): string }) => {
-      if (dado.toString().trim() === PEDIDO_DE_SYNC) conexao.pediuEstado = true
+      socket.on('close', () => conexoes.delete(conexao))
+      socket.on('error', () => conexoes.delete(conexao))
+      socket.on('pong', () => (conexao.respondeu = true))
+
+      // Único comando aceito: "me manda o estado atual de novo". Serve à webview
+      // recarregada — o socket vive no processo do launcher e sobrevive a ela, e
+      // sem isto a tela nova ficaria vazia até a próxima mudança.
+      socket.on('message', (dado: { toString(): string }) => {
+        if (dado.toString().trim() !== PEDIDO_DE_SYNC) return
+        conexao.pediuEstado = true
+        // O catálogo não passa pelo pulso, então o `pediuEstado` não o alcança.
+        enviarMapas(conexao)
+      })
     })
-  })
-
-  if (pulsoMs <= 0) {
-    app.log.warn('pulso do tempo real desligado: a fila e o lobby ficam só no poll')
-    return
   }
+
+  // O ping vem antes de qualquer `return`: sem ranqueada o canal continua de pé
+  // para o aviso de mapas, e conexão morta segurando lugar é problema deste
+  // canal, não da fila.
+  const ping = setInterval(() => {
+    for (const conexao of conexoes) {
+      // Não respondeu ao ping anterior: o peer sumiu sem fechar — wifi caiu,
+      // notebook fechou, NAT reciclou. Enquanto a conexão morta ficar aqui, o
+      // pulso segue renovando o `lastSeenAt` da fila dela, e a varredura de
+      // 30 s de `parearFila` — que existe justamente para tirar quem sumiu —
+      // nunca a alcança: o fantasma é pareado e o adversário fica sozinho na
+      // sala. Tirar do conjunto é o que solta a fila; o `terminate` é só a
+      // limpeza do que sobrou do socket.
+      if (!conexao.respondeu) {
+        conexoes.delete(conexao)
+        conexao.encerrar()
+        continue
+      }
+      conexao.respondeu = false
+      conexao.pingar()
+    }
+  }, pingMs)
 
   let rodando = false
 
-  const timer = setInterval(async () => {
+  const timer = pulsoMs <= 0 ? null : setInterval(async () => {
     // Ninguém conectado é ninguém para avisar: nem consulta o banco.
     if (rodando || conexoes.size === 0) return
     rodando = true
@@ -288,27 +423,13 @@ export default async function tempoRealRoutes(app: FastifyInstance, opcoes: Opco
     }
   }, pulsoMs)
 
-  const ping = setInterval(() => {
-    for (const conexao of conexoes) {
-      // Não respondeu ao ping anterior: o peer sumiu sem fechar — wifi caiu,
-      // notebook fechou, NAT reciclou. Enquanto a conexão morta ficar aqui, o
-      // pulso segue renovando o `lastSeenAt` da fila dela, e a varredura de
-      // 30 s de `parearFila` — que existe justamente para tirar quem sumiu —
-      // nunca a alcança: o fantasma é pareado e o adversário fica sozinho na
-      // sala. Tirar do conjunto é o que solta a fila; o `terminate` é só a
-      // limpeza do que sobrou do socket.
-      if (!conexao.respondeu) {
-        conexoes.delete(conexao)
-        conexao.encerrar()
-        continue
-      }
-      conexao.respondeu = false
-      conexao.pingar()
-    }
-  }, pingMs)
+  if (timer === null) {
+    app.log.warn('pulso do tempo real desligado: a fila e o lobby ficam só no poll (o aviso de mapas segue de pé)')
+  }
 
   app.addHook('onClose', async () => {
-    clearInterval(timer)
+    difusores.delete(difundirMapas)
+    if (timer) clearInterval(timer)
     clearInterval(ping)
   })
 }

@@ -30,6 +30,12 @@ deploy** — e todos os jogadores perdem a origem do download.
 
 Monte um volume e aponte `RELEASES_DIR` para ele.
 
+A API deriva mais duas pastas do lado dessa: `mapas/` (catálogo global de mapas,
+o que o admin sobe pelo painel) e `replays/`. A pasta dos mapas **também precisa
+de volume** — os arquivos só existem lá, e um rebuild sem volume apaga o acervo
+curado sem de onde recuperar. No `docker-compose.yml` isso já é o volume
+`mapas:/app/mapas`.
+
 ## Migrations
 
 Rodam sozinhas no boot. Um deploy nunca sobe com schema defasado, e não há passo
@@ -152,11 +158,48 @@ São dois comandos, e você nunca envia meio giga.
 
 ```bash
 gh release create v1.0.0 \
-  KaM_Remake.exe "Utils/RXXPacker/RXXPacker.exe" \
+  KaM_Remake.exe "Utils/RXXPacker/RXXPacker.exe" assets.zip \
   --repo RaposoG/kam_brasil --title "Kam Brasil 1.0.0" --notes "Primeira versão"
 ```
 
-Os anexos precisam se chamar exatamente `KaM_Remake.exe` e `RXXPacker.exe`.
+Os anexos precisam se chamar exatamente `KaM_Remake.exe`, `RXXPacker.exe` e
+`assets.zip`.
+
+#### O `assets.zip`
+
+Sprites, som, música e paletas **prontos** — o jogador não precisa mais ter o
+Knights and Merchants de 1998 nem converter nada na própria máquina.
+
+A árvore de dentro do zip já é a posição final na release:
+
+```
+data/Sprites/   .rxx (base) e .rxa (camada HD)
+data/sfx/       sounds.dat + speech.eng/
+Music/          as 15 faixas
+data/gfx/       as paletas (pal0.bbm é a única lida em runtime)
+```
+
+Gere os sprites com o `RXXPacker` a partir de uma cópia do original, uma vez:
+
+```bash
+RXXPacker.exe srx <recursos>/SpriteResource/ sint <recursos>/SpriteInterp/Output/ \
+              d data/Sprites/ rxa all
+```
+
+O `rxa all` é o que produz os `.rxa`. Não pule: é a camada de alta resolução que
+o engine **prefere** quando as sombras alpha estão ligadas, e é a ausência dela
+que fazia a comunidade reclamar de sprite feio.
+
+Cuidados que já custaram caro:
+
+- **Só `speech.eng`.** Os outros idiomas são peso morto (94 MB cada um).
+  `TKMResSounds.Create` monta `speech.<idioma>` com fallback do `locales.txt`, e
+  `ptb` não declara fallback — cai em `eng`. Uma pasta `speech` sem sufixo é a
+  mesma coisa duplicada: não mande as duas.
+- **Maiúsculas importam.** A API roda em Linux e confere caminho por caminho:
+  é `data/Sprites/`, com S maiúsculo.
+- **A voz do besteiro.** O original guarda `CROSSBOW/` e o engine procura
+  `crossbowman/` — renomeie, ou ela nunca toca.
 
 **2. Publique:**
 
@@ -173,12 +216,18 @@ Ela monta a árvore no servidor, buscando cada parte da fonte natural:
 | Parte | Origem |
 |---|---|
 | `KaM_Remake.exe`, `RXXPacker.exe` | anexos da release informada |
+| sprites, som, música, paletas | anexo `assets.zip` da mesma release |
 | textos, fontes, cursores, DLLs | `RaposoG/kam_brasil` |
 | mapas, campanhas, tutoriais | `reyandme/kam_remake_maps` |
 | sprites da comunidade | `reyandme/kam_remake_resources` |
 
 Depois calcula o sha256 de cada arquivo — sempre lendo do disco, nunca de algo
 informado — e escreve o manifesto.
+
+Antes de gravar qualquer coisa ela confere a montagem: os `.rxx`, o
+`sounds.dat`, o `pal0.bbm`, a `speech.eng` não-vazia e o `Music` não-vazio, além
+do que já era exigido. Faltando qualquer um, a rota responde 400 e **nada é
+publicado** — release quebrada só aparecia quando o jogador abria o jogo.
 
 Os clones ficam em cache no volume `sources`; da segunda release em diante é
 `fetch`, não clone. E são rasos: o histórico do KaM tem 16 mil commits que não
@@ -191,8 +240,10 @@ versão seria pagar meio giga para trocar 26 MB.
 Efeito colateral bem-vindo: quando a comunidade publica mapas novos no upstream,
 a próxima release os inclui sem ninguém fazer nada.
 
-**Nunca entram:** sprites, sons, músicas, `houses.dat` e `unit.dat`. Vêm do
-Knights and Merchants original e são gerados na máquina do jogador.
+**Sprites, sons e músicas entram na release, prontos.** Antes eram gerados na
+máquina de cada jogador a partir da cópia dele do Knights and Merchants — que é
+como cada instalação acabava diferente da outra. Agora quem converte é quem
+empacota, uma vez só: o jogador baixa e joga.
 
 ### Espaço em disco
 

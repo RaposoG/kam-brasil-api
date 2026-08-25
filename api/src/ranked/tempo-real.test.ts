@@ -32,7 +32,7 @@ process.env.VERIFY_ALLOWED_IPS ??= '127.0.0.1'
 process.env.RANKED_INTERNAL_SECRET ??= 'segredo-de-teste'
 
 // Dinâmico e depois do ambiente: um import estático seria içado para antes dele.
-const { default: tempoRealRoutes, eventosPara, NADA_ENVIADO } = await import('./tempo-real.ts')
+const { default: tempoRealRoutes, avisarCatalogoDeMapas, eventosPara, NADA_ENVIADO } = await import('./tempo-real.ts')
 const { vistaDoLobby } = await import('../routes/ranked.ts')
 type EstadoRanqueado = import('./tempo-real.ts').EstadoRanqueado
 
@@ -159,6 +159,8 @@ function buildApp(
   conta: string | null,
   ler: () => Promise<EstadoRanqueado>,
   pingMs?: number,
+  /** `0` = pulso desligado, que é como o canal sobe com a ranqueada desligada. */
+  pulsoMs = 5,
 ): FastifyInstance {
   const app = Fastify()
   app.register(
@@ -170,7 +172,7 @@ function buildApp(
       })
     }),
   )
-  app.register(tempoRealRoutes, { pulsoMs: 5, pingMs, ler })
+  app.register(tempoRealRoutes, { pulsoMs, pingMs, ler })
   return app
 }
 
@@ -187,9 +189,9 @@ async function ate(condicao: () => boolean, limiteMs = 2_000): Promise<void> {
  * mais curto, mas não provaria o que interessa aqui: que o upgrade HTTP
  * funciona no runtime em que a API roda.
  */
-async function conectar(app: FastifyInstance): Promise<WebSocket> {
+async function conectar(app: FastifyInstance, caminho = '/tempo-real'): Promise<WebSocket> {
   const endereco = await app.listen({ port: 0, host: '127.0.0.1' })
-  return new WebSocket(`${endereco.replace('http://', 'ws://')}/ranked/tempo-real`)
+  return new WebSocket(`${endereco.replace('http://', 'ws://')}${caminho}`)
 }
 
 async function recusou(ws: WebSocket): Promise<boolean> {
@@ -226,16 +228,32 @@ test('e é o `authenticate` de verdade que recusa, com 401, antes do upgrade', a
   // código. (`inject` não serve aqui: a resposta falsa do light-my-request se
   // atropela em rota de socket.)
   const endereco = await app.listen({ port: 0, host: '127.0.0.1' })
-  const res = await fetch(`${endereco}/ranked/tempo-real`, {
-    headers: {
-      connection: 'Upgrade',
-      upgrade: 'websocket',
-      'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
-      'sec-websocket-version': '13',
-    },
-  })
+  const handshake = (caminho: string) =>
+    fetch(`${endereco}${caminho}`, {
+      headers: {
+        connection: 'Upgrade',
+        upgrade: 'websocket',
+        'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
+        'sec-websocket-version': '13',
+      },
+    })
 
-  expect(res.status).toBe(401)
+  expect((await handshake('/tempo-real')).status).toBe(401)
+  // O caminho antigo é um apelido, não uma porta dos fundos: mesmo guarda.
+  expect((await handshake('/ranked/tempo-real')).status).toBe(401)
+  await app.close()
+})
+
+test('o caminho antigo continua servindo — launcher 1.4.x não sabe que mudou', async () => {
+  const app = buildApp(EU, async () => estadoDaFila(1))
+  const ws = await conectar(app, '/ranked/tempo-real')
+  const recebidas: { tipo: string }[] = []
+  ws.addEventListener('message', (evento) => recebidas.push(JSON.parse(String(evento.data))))
+
+  await ate(() => recebidas.length >= 1)
+  expect(recebidas[0]).toMatchObject({ tipo: 'fila', estado: 'waiting' })
+
+  ws.close()
   await app.close()
 })
 
@@ -350,5 +368,65 @@ test('quem para de responder ao ping é derrubado', async () => {
   await ate(() => fechou, 2_000)
 
   cru.end()
+  await app.close()
+})
+
+// --- catálogo de mapas ------------------------------------------------------
+//
+// Estes ficam por ÚLTIMO de propósito: `avisarCatalogoDeMapas` guarda a
+// assinatura no módulo, e da primeira chamada em diante toda conexão nova passa
+// a receber um evento `mapas` a mais. Os testes acima contam mensagens
+// (`toHaveLength(1)`), e é esse silêncio deles que prova o outro lado da regra:
+// com catálogo nunca publicado o canal não manda nada, e o cliente segue no que
+// já faz ao abrir — buscar o manifesto.
+
+test('quem estava offline quando o catálogo mudou recebe a assinatura ao conectar', async () => {
+  // A mudança acontece no vazio: ninguém conectado para ouvir.
+  avisarCatalogoDeMapas('sha-do-catalogo-1')
+
+  const app = buildApp(EU, async () => estadoDaFila(1))
+  const ws = await conectar(app)
+  const recebidas: unknown[] = []
+  ws.addEventListener('message', (evento) => recebidas.push(JSON.parse(String(evento.data))))
+
+  // Primeira mensagem, antes até da fila. É isto que fecha o buraco do jogador
+  // que estava com o launcher fechado: ele não precisa de evento nenhum, só de
+  // conectar.
+  await ate(() => recebidas.length >= 1)
+  expect(recebidas[0]).toEqual({ tipo: 'mapas', assinatura: 'sha-do-catalogo-1' })
+
+  ws.close()
+  await app.close()
+})
+
+test('o admin mexeu no catálogo: o aviso sai na hora, sem pulso, e não se repete à toa', async () => {
+  // Pulso desligado = ranqueada desligada. O aviso de mapas não pode depender
+  // dela, então aqui só trafega o que este teste manda trafegar.
+  const app = buildApp(EU, async () => estadoDaFila(1), undefined, 0)
+  const ws = await conectar(app)
+  const recebidas: unknown[] = []
+  ws.addEventListener('message', (evento) => recebidas.push(JSON.parse(String(evento.data))))
+
+  await ate(() => recebidas.length >= 1)
+  expect(recebidas[0]).toEqual({ tipo: 'mapas', assinatura: 'sha-do-catalogo-1' })
+
+  // O gancho que o módulo do catálogo chama ao adicionar/atualizar/remover.
+  avisarCatalogoDeMapas('sha-do-catalogo-2')
+  await ate(() => recebidas.length >= 2)
+  expect(recebidas[1]).toEqual({ tipo: 'mapas', assinatura: 'sha-do-catalogo-2' })
+
+  // Chamado de novo com a mesma assinatura (o admin salvou algo que não mudou o
+  // catálogo): ninguém precisa ouvir, e ninguém precisa rebaixar mapa nenhum.
+  avisarCatalogoDeMapas('sha-do-catalogo-2')
+  await new Promise((r) => setTimeout(r, 50))
+  expect(recebidas).toHaveLength(2)
+
+  // `sync`: a webview recarregou e não sabe qual catálogo ela tem. O canal
+  // repete a assinatura atual — o pulso não alcança este evento.
+  ws.send('sync')
+  await ate(() => recebidas.length >= 3)
+  expect(recebidas[2]).toEqual({ tipo: 'mapas', assinatura: 'sha-do-catalogo-2' })
+
+  ws.close()
   await app.close()
 })

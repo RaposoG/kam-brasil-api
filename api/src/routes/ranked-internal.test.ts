@@ -21,7 +21,15 @@ process.env.VERIFY_ALLOWED_IPS = '127.0.0.1'
 process.env.RANKED_INTERNAL_SECRET = 'segredo-de-teste'
 process.env.RANKED_ALLOWED_EXE_CRCS = ''
 
-const SEGREDO = 'segredo-de-teste'
+// O segredo vem do config JÁ CARREGADO, e não da constante que a env acima
+// pede. `bun test` roda tudo num processo só e o config.ts congela na PRIMEIRA
+// importação: se outro arquivo de teste importou uma rota antes deste, a env
+// definida aqui já não vale nada, e as nove chamadas abaixo tomariam 403 por
+// segredo errado — um vermelho que não tem nada a ver com o que se testa aqui.
+// Ler de volta o que o config resolveu é o que faz este arquivo passar em
+// qualquer ordem. Quando ele chega primeiro, é 'segredo-de-teste' mesmo.
+const { config } = await import('../config.ts')
+const SEGREDO = config.RANKED_INTERNAL_SECRET
 const TEMPORADA = '11111111-1111-4111-8111-111111111111'
 const PARTIDA = '22222222-2222-4222-8222-222222222222'
 const CONTA_A = '33333333-3333-4333-8333-333333333333'
