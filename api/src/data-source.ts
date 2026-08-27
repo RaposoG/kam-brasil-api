@@ -32,6 +32,8 @@ import { Reports1786000000004 } from './migrations/1786000000004-reports.ts'
 import { Chamado } from './entities/chamado.ts'
 import { ChamadoMensagem } from './entities/chamado-mensagem.ts'
 import { Chamados1786000000006 } from './migrations/1786000000006-chamados.ts'
+import { RedefinicaoSenha } from './entities/redefinicao-senha.ts'
+import { RedefinicoesSenha1786000000007 } from './migrations/1786000000007-redefinicoes-senha.ts'
 import { MapCatalog1786000000005 } from './migrations/1786000000005-map-catalog.ts'
 
 export const dataSource = new DataSource({
@@ -59,6 +61,7 @@ export const dataSource = new DataSource({
     Report,
     Chamado,
     ChamadoMensagem,
+    RedefinicaoSenha,
   ],
   // Nunca true: o schema é versionado por migration, inclusive em desenvolvimento.
   synchronize: false,
@@ -74,6 +77,7 @@ export const dataSource = new DataSource({
     Reports1786000000004,
     MapCatalog1786000000005,
     Chamados1786000000006,
+    RedefinicoesSenha1786000000007,
   ],
   logging: config.isDev ? ['error', 'warn'] : ['error'],
 })
@@ -99,3 +103,4 @@ export const matchPlayers = () => dataSource.getRepository(MatchPlayer)
 export const reports = () => dataSource.getRepository(Report)
 export const chamados = () => dataSource.getRepository(Chamado)
 export const chamadoMensagens = () => dataSource.getRepository(ChamadoMensagem)
+export const redefinicoesSenha = () => dataSource.getRepository(RedefinicaoSenha)

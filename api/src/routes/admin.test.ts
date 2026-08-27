@@ -54,6 +54,7 @@ function repoFake(rows: unknown[] = []) {
 
 await mock.module('../data-source.ts', () => ({
   chamados: () => ({}),
+  redefinicoesSenha: () => ({}),
   chamadoMensagens: () => ({}),
   dataSource: {
     query: async (sql: string) => {

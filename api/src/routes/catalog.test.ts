@@ -22,6 +22,7 @@ let ativa: Record<string, unknown> | null = null
 // que reports.ts busca em data-source também aparece aqui, sem uso.
 await mock.module('../data-source.ts', () => ({
   chamados: () => ({}),
+  redefinicoesSenha: () => ({}),
   chamadoMensagens: () => ({}),
   seasons: () => ({ findOne: async () => ativa }),
   dataSource: { query: async () => [] },

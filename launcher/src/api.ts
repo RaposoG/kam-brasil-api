@@ -62,6 +62,13 @@ export const register = (email: string, nickname: string, password: string): Pro
 export const login = (login: string, password: string): Promise<Account> =>
   invoke('login', { login, password })
 
+/** Pede o código de redefinição por email. A resposta é genérica de propósito. */
+export const esqueciSenha = (email: string): Promise<void> => invoke('senha_esquecer', { email })
+
+/** Troca a senha com o código de 6 dígitos que chegou por email. */
+export const redefinirSenha = (email: string, codigo: string, senha: string): Promise<void> =>
+  invoke('senha_redefinir', { email, codigo, senha })
+
 export const logout = (): Promise<void> => invoke('logout')
 
 /** Reaproveita a sessão guardada no cofre do sistema. `null` = precisa logar. */

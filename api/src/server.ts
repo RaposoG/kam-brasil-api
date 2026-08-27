@@ -23,6 +23,7 @@ import replayRoutes from './routes/replay.ts'
 import mapasRoutes from './routes/mapas.ts'
 import reportsRoutes from './routes/reports.ts'
 import chamadosRoutes from './routes/chamados.ts'
+import senhaRoutes from './routes/senha.ts'
 import tempoRealRoutes from './ranked/tempo-real.ts'
 
 const app = Fastify({
@@ -67,6 +68,9 @@ app.addHook('onSend', async (request, reply) => {
 
 await app.register(authPlugin)
 await app.register(authRoutes)
+// Esqueci a senha: código por email via Resend. Público de propósito — quem
+// precisa dele é justamente quem não consegue entrar.
+await app.register(senhaRoutes)
 await app.register(masterRoutes)
 await app.register(clientRoutes)
 await app.register(verifyRoutes)
@@ -134,6 +138,9 @@ if (config.adminEmails.length === 0) {
   // Sem isto, o painel responde 403 para todo mundo e ninguém entende por quê:
   // o sintoma (403) não sugere em nada que a variável é que está vazia.
   app.log.warn('ADMIN_EMAILS vazio: ninguém tem acesso ao painel administrativo.')
+}
+if (!config.RESEND_API_KEY || !config.RESEND_FROM) {
+  app.log.warn('RESEND_API_KEY/RESEND_FROM vazios: a recuperação de senha responde 503.')
 }
 
 if (config.announceAllowedIps.length === 0) {

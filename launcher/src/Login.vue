@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { type Account, apiBase, login, register } from "./api";
+import { type Account, apiBase, esqueciSenha, login, redefinirSenha, register } from "./api";
 
 const emit = defineEmits<{ entrou: [conta: Account] }>();
 
-type Modo = "login" | "registro";
+// `esqueci` pede o email; `redefinir` pede o código que chegou + a senha nova.
+type Modo = "login" | "registro" | "esqueci" | "redefinir";
 
 const modo = ref<Modo>("login");
 const ocupado = ref(false);
 const erro = ref("");
 const aviso = ref("");
 const base = ref("");
-const form = ref({ login: "", email: "", nickname: "", senha: "" });
+const form = ref({ login: "", email: "", nickname: "", senha: "", codigo: "" });
 
 onMounted(async () => (base.value = await apiBase()));
 
@@ -28,10 +29,20 @@ async function enviar() {
   try {
     if (modo.value === "login") {
       emit("entrou", await login(form.value.login, form.value.senha));
-    } else {
+    } else if (modo.value === "registro") {
       await register(form.value.email, form.value.nickname, form.value.senha);
       aviso.value = "Conta criada! Agora é só entrar.";
       form.value.login = form.value.nickname;
+      modo.value = "login";
+    } else if (modo.value === "esqueci") {
+      await esqueciSenha(form.value.email);
+      aviso.value = "Se este email tiver conta, o código chega em instantes. Olhe também o spam.";
+      modo.value = "redefinir";
+    } else {
+      await redefinirSenha(form.value.email, form.value.codigo, form.value.senha);
+      aviso.value = "Senha redefinida! Entre com a senha nova.";
+      form.value.login = form.value.email;
+      form.value.codigo = "";
       modo.value = "login";
     }
     form.value.senha = "";
@@ -68,7 +79,25 @@ async function enviar() {
           <input v-model="form.login" required autocomplete="username" />
         </label>
 
-        <template v-else>
+        <label v-if="modo === 'esqueci' || modo === 'redefinir'">
+          Email da conta
+          <input v-model="form.email" type="email" required autocomplete="email" />
+        </label>
+
+        <label v-if="modo === 'redefinir'">
+          Código recebido por email
+          <input
+            v-model="form.codigo"
+            required
+            inputmode="numeric"
+            pattern="\d{6}"
+            maxlength="6"
+            placeholder="6 dígitos"
+            title="o código de 6 dígitos que chegou no seu email"
+          />
+        </label>
+
+        <template v-else-if="modo === 'registro'">
           <label>
             Email
             <input v-model="form.email" type="email" required autocomplete="email" />
@@ -87,8 +116,8 @@ async function enviar() {
           </label>
         </template>
 
-        <label>
-          Senha
+        <label v-if="modo !== 'esqueci'">
+          {{ modo === "redefinir" ? "Senha nova" : "Senha" }}
           <input
             v-model="form.senha"
             type="password"
@@ -102,7 +131,27 @@ async function enviar() {
         <p v-if="aviso" class="aviso">{{ aviso }}</p>
 
         <button class="btn-ouro entrar" type="submit" :disabled="ocupado">
-          {{ ocupado ? "AGUARDE" : modo === "login" ? "ENTRAR" : "CRIAR CONTA" }}
+          {{
+            ocupado
+              ? "AGUARDE"
+              : modo === "login"
+                ? "ENTRAR"
+                : modo === "registro"
+                  ? "CRIAR CONTA"
+                  : modo === "esqueci"
+                    ? "ENVIAR CÓDIGO"
+                    : "REDEFINIR SENHA"
+          }}
+        </button>
+
+        <button v-if="modo === 'login'" class="esqueci" type="button" @click="trocar('esqueci')">
+          esqueci minha senha
+        </button>
+        <button v-if="modo === 'esqueci' || modo === 'redefinir'" class="esqueci" type="button" @click="trocar('login')">
+          voltar para o login
+        </button>
+        <button v-if="modo === 'esqueci'" class="esqueci" type="button" @click="trocar('redefinir')">
+          já tenho um código
         </button>
       </form>
     </div>
@@ -227,5 +276,21 @@ input:focus {
   padding: 13px;
   font-size: 15px;
   letter-spacing: 0.16em;
+}
+.esqueci {
+  align-self: center;
+  padding: 2px 4px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--calado-3);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.esqueci:hover {
+  color: var(--ouro-claro);
 }
 </style>

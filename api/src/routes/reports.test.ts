@@ -41,6 +41,7 @@ const gravadas: Record<string, unknown>[] = []
 // `seasons` aqui, que catalog.ts busca e este teste não usa.
 await mock.module('../data-source.ts', () => ({
   chamados: () => ({}),
+  redefinicoesSenha: () => ({}),
   chamadoMensagens: () => ({}),
   dataSource: {
     query: async () => linhasDeMeus,

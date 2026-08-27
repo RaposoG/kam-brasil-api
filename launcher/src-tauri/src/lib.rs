@@ -52,6 +52,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             auth::register,
             auth::login,
+            auth::senha_esquecer,
+            auth::senha_redefinir,
             auth::logout,
             auth::restore_session,
             auth::api_base,

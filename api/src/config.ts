@@ -69,6 +69,17 @@ const schema = z.object({
    */
   ADMIN_EMAILS: z.string().default(''),
 
+  /**
+   * Envio de email transacional via Resend (https://resend.com). Os dois
+   * juntos ligam a recuperação de senha; sem eles a rota responde 503 com
+   * recado claro — melhor que aceitar o pedido e nunca mandar o código.
+   *
+   * RESEND_FROM precisa ser de um domínio verificado no painel do Resend,
+   * no formato `Kam Brasil <noreply@dominio.com>`.
+   */
+  RESEND_API_KEY: z.string().default(''),
+  RESEND_FROM: z.string().default(''),
+
   /** Pasta com os binários das releases, servida em /downloads/. */
   RELEASES_DIR: z.string().default('./releases'),
 

@@ -155,6 +155,37 @@ impl ApiClient {
             .map_err(|e| format!("resposta inesperada do servidor: {e}"))
     }
 
+    /// Pede o código de redefinição por email. Rota pública — quem precisa
+    /// dela é justamente quem não consegue entrar.
+    pub async fn senha_esquecer(&self, email: &str) -> Result<(), String> {
+        let response = self
+            .client
+            .post(self.url("/auth/esqueci"))
+            .json(&serde_json::json!({ "email": email }))
+            .send()
+            .await
+            .map_err(|e| format!("não foi possível falar com o servidor: {e}"))?;
+        if !response.status().is_success() {
+            return Err(Self::error_message(response).await);
+        }
+        Ok(())
+    }
+
+    /// Troca a senha com o código recebido por email.
+    pub async fn senha_redefinir(&self, email: &str, codigo: &str, senha: &str) -> Result<(), String> {
+        let response = self
+            .client
+            .post(self.url("/auth/redefinir"))
+            .json(&serde_json::json!({ "email": email, "codigo": codigo, "senha": senha }))
+            .send()
+            .await
+            .map_err(|e| format!("não foi possível falar com o servidor: {e}"))?;
+        if !response.status().is_success() {
+            return Err(Self::error_message(response).await);
+        }
+        Ok(())
+    }
+
     pub async fn login(&self, login: &str, password: &str) -> Result<Session, String> {
         let response = self
             .client
@@ -531,6 +562,21 @@ pub async fn register(
     password: String,
 ) -> Result<Account, String> {
     state.api.register(&email, &nickname, &password).await
+}
+
+#[tauri::command]
+pub async fn senha_esquecer(state: State<'_, AppState>, email: String) -> Result<(), String> {
+    state.api.senha_esquecer(&email).await
+}
+
+#[tauri::command]
+pub async fn senha_redefinir(
+    state: State<'_, AppState>,
+    email: String,
+    codigo: String,
+    senha: String,
+) -> Result<(), String> {
+    state.api.senha_redefinir(&email, &codigo, &senha).await
 }
 
 #[tauri::command]
