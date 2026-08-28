@@ -77,6 +77,10 @@ services:
       # acesso fica versionado e auditavel, sem SQL na mao. Vazio = ninguem.
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       MOTD: ${MOTD:-Bem-vindo ao Kam Brasil!}
+      # Recuperacao de senha por email (Resend). Os valores moram no painel do
+      # Dokploy; sem eles a rota /auth/esqueci responde 503 com aviso claro.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM: ${RESEND_FROM:-}
       # Atras de nginx/Cloudflare tem que ser true, senao request.ip devolve o IP
       # do proxy e o log e o rate-limit viram enfeite. Os allowlists abaixo NAO
       # dependem disto: eles olham o socket, nao o X-Forwarded-For.
